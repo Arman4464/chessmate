@@ -262,11 +262,16 @@ export function classifyMove(params: ClassificationParams): ClassificationResult
     // 3. Brilliant Move (!!) - Sound Piece Sacrifice (Article 8572705)
     // Rule: "A Brilliant move is when you find a good piece sacrifice.
     //        You should not be in a bad position after a Brilliant move.
-    //        You should not be completely winning even if you hadn't found the move."
+    //        You should not be completely winning even if you hadn't found the move.
+    //        We are also more generous in defining a piece sacrifice for newer players
+    //        compared to those who are higher-rated."
     // =========================================================================
-    const isContestedBefore = playerScoreBefore <= 350 && beforeE <= 0.88;
-    const isSoundSacrifice = deltaE <= 0.025 && afterE >= 0.40 && playerScoreAfter >= -30;
-    const satisfiesEndgame = piecesCount >= 7 || isBestMove;
+    const isContestedBefore = playerScoreBefore <= 400 && beforeE <= 0.88;
+    // Rating generosity for piece sacrifices
+    const maxSacDeltaE = playerRating < 1300 ? 0.045 : (playerRating < 1700 ? 0.035 : 0.025);
+    const minSacAfterE = playerRating < 1300 ? 0.35 : 0.40;
+    const isSoundSacrifice = deltaE <= maxSacDeltaE && afterE >= minSacAfterE && playerScoreAfter >= -80;
+    const satisfiesEndgame = piecesCount >= 6 || isBestMove;
 
     if (isSacrifice && isSoundSacrifice && isContestedBefore && satisfiesEndgame) {
         return {
@@ -286,9 +291,9 @@ export function classifyMove(params: ClassificationParams): ClassificationResult
     //        and miss the opportunity to gain a winning position."
     // =========================================================================
     const missedMate = playerScoreBefore >= 90000 && playerScoreAfter < 90000;
-    const blewWinningAdvantage = playerScoreBefore >= 250 && playerScoreAfter <= 50 && (deltaCp >= 200 || deltaE >= 0.20) && !isBestMove;
+    const blewWinningAdvantage = playerScoreBefore >= 220 && playerScoreAfter <= 50 && (deltaCp >= 170 || deltaE >= 0.18) && !isBestMove;
     const opponentErrored = opponentPreviousRating === 'mistake' || opponentPreviousRating === 'blunder' || opponentPreviousRating === 'miss';
-    const failedToPunish = opponentErrored && (deltaE >= 0.12 || deltaCp >= 130) && playerScoreAfter < 100 && !isBestMove;
+    const failedToPunish = opponentErrored && (deltaE >= 0.10 || deltaCp >= 110) && playerScoreAfter < 100 && !isBestMove;
 
     if (!isBestMove && (missedMate || blewWinningAdvantage || failedToPunish)) {
         return {
@@ -303,27 +308,47 @@ export function classifyMove(params: ClassificationParams): ClassificationResult
     }
 
     // =========================================================================
-    // 5. Great Move (!) - Only Good Move, Miraculous Save, or Critical Conversion
-    // Rule: "Critical moves: turning losing into equal, finding the only good move..."
+    // 5. Great Move (!) - Exact Chess.com 2026 Article 8572705 Definition:
+    // "These are moves that were critical to the outcome of the game, such as
+    //  turning a losing position into an equal one, an equal position into a winning one,
+    //  or finding the only good move in a position.
+    //  Similar to Brilliant Moves, we are more generous in what we call a Great Move
+    //  for new players compared to higher-rated players."
     // =========================================================================
     const isMateDelivery = Boolean(san && san.includes('#') && playerScoreBefore <= 450);
     const foundMateSequence = playerScoreAfter >= 99000 && playerScoreBefore < 50000 && playerScoreBefore <= 450;
-    const miraculousSave = playerScoreBefore <= -180 && playerScoreAfter >= -30 && beforeE <= 0.28 && afterE >= 0.45;
-    const tacticalPunish = (opponentPreviousRating === 'blunder' || opponentPreviousRating === 'miss') &&
-        playerScoreBefore <= 30 && playerScoreAfter >= 150;
+    
+    // Criterion 1: Turning losing into equal (Miraculous Save)
+    const miraculousSave = (playerScoreBefore <= -130 || beforeE <= 0.32) &&
+        (playerScoreAfter >= -35 || afterE >= 0.46) &&
+        deltaE <= 0.01;
 
-    // Multi-PV 2 "Only Good Move" check: gap between move 1 and move 2 is large
+    // Criterion 2: Turning an equal position into a winning one (Decisive Breakthrough)
+    const equalToWinning = (playerScoreBefore >= -60 && playerScoreBefore <= 60 && beforeE >= 0.42 && beforeE <= 0.58) &&
+        (playerScoreAfter >= 130 && afterE >= 0.68) &&
+        deltaE <= 0.01;
+
+    // Tactical punish on opponent error
+    const tacticalPunish = opponentErrored && playerScoreBefore <= 40 && playerScoreAfter >= 140 && deltaE <= 0.01;
+
+    // Criterion 3: Finding the Only Good Move in a position (Multi-PV 2 gap)
     let isOnlyGoodMove = false;
-    if (secondBestScore !== undefined) {
+    if (secondBestScore !== undefined && isBestMove && playerScoreAfter >= -80 && isContestedBefore) {
         const secondBestE = winExpectancy(secondBestScore, playerRating);
-        const gapE = Math.max(0, afterE - secondBestE);
-        const gapCp = Math.max(0, playerScoreAfter - secondBestScore);
-        if (gapE >= 0.14 || gapCp >= 140) {
+        const gapE = Math.max(0, beforeE - secondBestE);
+        const gapCp = Math.max(0, playerScoreBefore - secondBestScore);
+        
+        // Rating-adaptive gap threshold per Article 8572705:
+        // Generous for newer players, strict for masters
+        const requiredGapE = playerRating < 1200 ? 0.09 : (playerRating < 1800 ? 0.12 : 0.14);
+        const requiredGapCp = playerRating < 1200 ? 90 : (playerRating < 1800 ? 115 : 140);
+
+        if (gapE >= requiredGapE || gapCp >= requiredGapCp) {
             isOnlyGoodMove = true;
         }
     }
 
-    if (isBestMove && !isSacrifice && (isOnlyGoodMove || miraculousSave || foundMateSequence || tacticalPunish || isMateDelivery)) {
+    if (isBestMove && !isSacrifice && (isOnlyGoodMove || miraculousSave || equalToWinning || foundMateSequence || tacticalPunish || isMateDelivery)) {
         return {
             classification: 'great',
             deltaE,

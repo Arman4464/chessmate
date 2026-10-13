@@ -794,7 +794,7 @@ export default function Board(props: { cleanArrows: () => void, sacrifice?: bool
                     if (!showArrows) return
                     if ((highlightRating === 'book' && arrowAfterMove) || highlightRating === undefined) return
 
-                    const move = arrowAfterMove ? previousBestMove : bestMove
+                    const move = bestMove ?? previousBestMove
                     const adaptedMove = move?.map(square => {
                         return adaptSquare(square)
                     })

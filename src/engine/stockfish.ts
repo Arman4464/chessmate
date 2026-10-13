@@ -47,10 +47,70 @@ export interface move {
     accuracy?: number,
     scoreBefore?: number,
     scoreAfter?: number,
+    secondBestEval?: string[],
 }
 
 export interface openings {
     [key: string]: string,
+}
+
+let cachedOpenings: openings | null = null
+let cachedEpdMap: Map<string, string> | null = null
+
+export function indexOpenings(openingsObj: openings) {
+    if (!openingsObj || Object.keys(openingsObj).length === 0) return
+    cachedOpenings = openingsObj
+    cachedEpdMap = new Map()
+    for (const [k, v] of Object.entries(openingsObj)) {
+        cachedEpdMap.set(k, v)
+        const epd4 = k.split(' ').slice(0, 4).join(' ')
+        if (!cachedEpdMap.has(epd4)) cachedEpdMap.set(epd4, v)
+        const epd3 = k.split(' ').slice(0, 3).join(' ')
+        if (!cachedEpdMap.has(epd3)) cachedEpdMap.set(epd3, v)
+    }
+}
+
+export function lookupBookMove(fen: string, openingsObj?: openings): string | undefined {
+    if (openingsObj && Object.keys(openingsObj).length > 0 && !cachedOpenings) {
+        indexOpenings(openingsObj)
+    }
+    if (cachedEpdMap) {
+        if (cachedEpdMap.has(fen)) return cachedEpdMap.get(fen)
+        const epd4 = fen.split(' ').slice(0, 4).join(' ')
+        if (cachedEpdMap.has(epd4)) return cachedEpdMap.get(epd4)
+        const epd3 = fen.split(' ').slice(0, 3).join(' ')
+        if (cachedEpdMap.has(epd3)) return cachedEpdMap.get(epd3)
+    }
+    const dict = cachedOpenings || openingsObj
+    if (!dict) return undefined
+    if (dict[fen]) return dict[fen]
+    const epd4 = fen.split(' ').slice(0, 4).join(' ')
+    if (dict[epd4]) return dict[epd4]
+    return undefined
+}
+
+export async function getOrLoadOpenings(userOpenings?: openings): Promise<openings | null> {
+    if (userOpenings && Object.keys(userOpenings).length > 0) {
+        indexOpenings(userOpenings)
+        return userOpenings
+    }
+    if (cachedOpenings && Object.keys(cachedOpenings).length > 0) {
+        return cachedOpenings
+    }
+    if (typeof window !== 'undefined' && typeof fetch !== 'undefined') {
+        try {
+            const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ''
+            const res = await fetch(`${basePath}/openings/openings.json`)
+            if (res.ok) {
+                const loaded = await res.json()
+                indexOpenings(loaded as openings)
+                return loaded as openings
+            }
+        } catch (e) {
+            console.warn('[Engine] Could not load openings:', e)
+        }
+    }
+    return null
 }
 
 const COMMENTS = {
@@ -580,8 +640,12 @@ export async function parseMove(
     handleAbort: () => void,
     signal: AbortSignal,
     opponentRating?: moveRating,
-    playerRating: number = 1500
-): Promise<move> {
+    playerRating: number = 1500,
+    previousBestMove?: square[],
+    previousSecondBestEval?: string[],
+    isBookMoveOverride?: boolean,
+    bookCommentOverride?: string
+): Promise<move & { nextBestMove?: square[], nextBestMoveSan?: string, nextSecondBestEval?: string[] }> {
     if (signal.aborted) handleAbort()
     const movement: square[] = [move.from, move.to].map(square => {
         const { col, row } = formatSquare(square)
@@ -634,17 +698,17 @@ export async function parseMove(
     // So from the player's perspective, it is the negative (or checkmate delivered).
     const playerScoreAfter = chess.isCheckmate() ? 100000 : -evalToCentipawns(staticEval)
 
-    // Second-best move score (Multi-PV 2) from player's perspective
+    // Second-best move score (Multi-PV 2) from player's perspective in move.before:
     let secondBestScore: number | undefined
-    if (secondBestEval && secondBestEval.length >= 2) {
-        secondBestScore = -evalToCentipawns(secondBestEval)
+    if (previousSecondBestEval && previousSecondBestEval.length >= 2) {
+        secondBestScore = evalToCentipawns(previousSecondBestEval)
     }
 
     const pRating = playerRating || 1500
 
-    // Check if book move
-    const bookComment = openings[fen]
-    const isBookMove = Boolean(bookComment)
+    // Check if book move (via override or full FEN / EPD lookup)
+    const bookComment = bookCommentOverride !== undefined ? bookCommentOverride : lookupBookMove(fen, openings)
+    const isBookMove = isBookMoveOverride !== undefined ? isBookMoveOverride : Boolean(bookComment)
 
     // Best move comparison
     const isBestMove = Boolean(previousBestMoveSan && previousBestMoveSan === move.san)
@@ -680,9 +744,15 @@ export async function parseMove(
         displayEval = ['cp', String(whiteEvalCp)]
     }
 
-    if (chess.isGameOver()) bestMove = undefined
+    // Best move for THIS player on THIS turn:
+    const playerBestMove = previousBestMove
+    const playerBestMoveSan = previousBestMoveSan
 
-    const bestMoveSan = bestMove ? moveToSan(bestMove, bestMoveCoronation, fen) : undefined
+    // Next best move (for OPPONENT on the NEXT ply):
+    if (chess.isGameOver()) bestMove = undefined
+    const nextBestMove = bestMove
+    const nextBestMoveSan = bestMove ? moveToSan(bestMove, bestMoveCoronation, fen) : undefined
+    const nextSecondBestEval = secondBestEval
 
     const newPreviousStaticEval = [staticEval, ...previousStaticEvals]
 
@@ -694,8 +764,8 @@ export async function parseMove(
         castle,
         moveRating,
         comment,
-        bestMove,
-        bestMoveSan,
+        bestMove: playerBestMove,
+        bestMoveSan: playerBestMoveSan,
         fen,
         sacrifice,
         movement,
@@ -705,6 +775,10 @@ export async function parseMove(
         accuracy,
         scoreBefore: playerScoreBefore,
         scoreAfter: playerScoreAfter,
+        secondBestEval,
+        nextBestMove,
+        nextBestMoveSan,
+        nextSecondBestEval,
     }
 }
 
@@ -717,12 +791,12 @@ export async function parsePosition(stockfish: StockfishEngine | Worker, chess: 
         analyzeObject = await analyze(stockfish, fen, depth, signal)
     } catch {
         handleAbort()
-        analyzeObject = { bestMove: [], staticEval: [] }
+        analyzeObject = { bestMove: [], staticEval: [], secondBestEval: undefined }
     }
 
     if (signal.aborted) handleAbort()
 
-    const { bestMove, staticEval, bestMoveCoronation } = analyzeObject
+    const { bestMove, staticEval, bestMoveCoronation, secondBestEval } = analyzeObject
 
     const bestMoveSan = moveToSan(bestMove, bestMoveCoronation, fen)
 
@@ -743,6 +817,7 @@ export async function parsePosition(stockfish: StockfishEngine | Worker, chess: 
         bestMoveSan,
         color,
         previousStaticEvals,
+        secondBestEval,
         evaluation: displayEval,
     }
 }
@@ -993,9 +1068,21 @@ export function parsePGN(
     }
 
         const localStartTime = Date.now();
-        let moveNumber = 0, previousBestMoveSan: string | undefined, previousSacrifice = false, previousStaticEvals: string[][] = []
-        let lastWhiteRating: moveRating | undefined
-        let lastBlackRating: moveRating | undefined
+        let moveNumber = 0;
+        let previousBestMove: square[] | undefined;
+        let previousBestMoveSan: string | undefined;
+        let previousSacrifice = false;
+        let previousStaticEvals: string[][] = [];
+        let previousSecondBestEval: string[] | undefined;
+        let lastWhiteRating: moveRating | undefined;
+        let lastBlackRating: moveRating | undefined;
+        let inBook = true;
+
+        // Auto-load openings if not cached
+        await getOrLoadOpenings(openings);
+
+        // Ensure engine is configured with MultiPV 2 for candidate evaluation
+        stockfish.postMessage("setoption name MultiPV value 2");
 
         for (const move of history) {
             const elapsed = Math.max(0.1, (Date.now() - localStartTime) / 1000);
@@ -1031,12 +1118,21 @@ export function parsePGN(
 
                 previousStaticEvals = pos.previousStaticEvals
                 previousSacrifice = false
+                previousBestMove = pos.bestMove
                 previousBestMoveSan = pos.bestMoveSan
+                previousSecondBestEval = pos.secondBestEval
             }
 
             const isWhite = move.color === 'w'
             const oppRating = isWhite ? lastBlackRating : lastWhiteRating
             const pRating = isWhite ? whiteElo : blackElo
+
+            // Book continuity: Check if this move is in canonical opening book
+            const bookComment = inBook ? lookupBookMove(move.after, openings) : undefined
+            const isBookMove = Boolean(bookComment)
+            if (inBook && !isBookMove) {
+                inBook = false
+            }
 
             const analyzedMove = await parseMove(
                 stockfish,
@@ -1050,7 +1146,11 @@ export function parsePGN(
                 handleAbort,
                 signal,
                 oppRating,
-                pRating
+                pRating,
+                previousBestMove,
+                previousSecondBestEval,
+                isBookMove,
+                bookComment
             )
 
             moves.push(analyzedMove)
@@ -1064,7 +1164,9 @@ export function parsePGN(
             if (!analyzedMove.previousStaticEvals || analyzedMove.sacrifice === undefined) continue
 
             previousStaticEvals = analyzedMove.previousStaticEvals
-            previousBestMoveSan = analyzedMove.bestMoveSan
+            previousBestMove = analyzedMove.nextBestMove
+            previousBestMoveSan = analyzedMove.nextBestMoveSan
+            previousSecondBestEval = analyzedMove.nextSecondBestEval
 
             moveNumber++
             previousSacrifice = analyzedMove.sacrifice
