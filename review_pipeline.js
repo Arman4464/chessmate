@@ -12,15 +12,44 @@ const ecoBook = Object.keys(ecoMap).length > 0
     ? new Set(Object.keys(ecoMap))
     : (fs.existsSync(ecoBookPath) ? new Set(JSON.parse(fs.readFileSync(ecoBookPath, 'utf8'))) : new Set());
 
-// Load Authoritative 2026 Chess.com Move Classification Tree
+// Load Authoritative 2026 Chess.com Move Classification Tree & Expected Points Model
 const {
     classifyMove,
     winExpectancy,
     calculateDeltaE,
-    caps2MoveAccuracy
+    caps2MoveAccuracy,
+    CLASSIFICATION_COMMENTS
 } = require('./src/engine/classificationTree.ts');
 
+function normalizeCeeClassification(rawName) {
+    if (!rawName) return null;
+    const lower = rawName.toLowerCase();
+    if (lower === 'greatfind' || lower === 'great_find') return 'great';
+    if (lower === 'lastbook' || lower === 'last_book') return 'book';
+    if (lower === 'incorrect') return 'miss';
+    return lower;
+}
 
+function getValidPvPrefix(fen, pvArray) {
+    if (!pvArray || !Array.isArray(pvArray) || pvArray.length === 0) return [];
+    try {
+        const c = new Chess(fen);
+        const valid = [];
+        for (const lan of pvArray) {
+            const moves = c.moves({ verbose: true });
+            const matched = moves.find(m => (m.from + m.to + (m.promotion || '')) === lan);
+            if (matched) {
+                c.move(matched);
+                valid.push(lan);
+            } else {
+                break;
+            }
+        }
+        return valid;
+    } catch {
+        return [];
+    }
+}
 
 const UCI_TOKENS = {
     depth: 1, seldepth: 1, time: 1, nodes: 1, multipv: 1, cp: 1, mate: 1,
@@ -72,16 +101,23 @@ class ChessReviewEngine {
         const workers = [];
         for (let i = 0; i < this.numWorkers; i++) {
             const proc = spawn(this.sfPath);
-            proc.stdin.write('uci\n');
-            proc.stdin.write('setoption name Threads value 1\n');
-            proc.stdin.write('setoption name Hash value 16\n');
-            proc.stdin.write('setoption name Skill Level value 20\n');
-            proc.stdin.write(`setoption name MultiPV value ${multiPv}\n`);
-            proc.stdin.write('isready\n');
+            await new Promise((resolve) => {
+                function onInit(chunk) {
+                    if (chunk.toString().includes('readyok')) {
+                        proc.stdout.removeListener('data', onInit);
+                        resolve();
+                    }
+                }
+                proc.stdout.on('data', onInit);
+                proc.stdin.write('uci\n');
+                proc.stdin.write('setoption name Threads value 1\n');
+                proc.stdin.write('setoption name Hash value 16\n');
+                proc.stdin.write('setoption name Skill Level value 20\n');
+                proc.stdin.write(`setoption name MultiPV value ${multiPv}\n`);
+                proc.stdin.write('isready\n');
+            });
             workers.push({ proc, busy: false });
         }
-
-        await new Promise(r => setTimeout(r, 200));
 
         const queue = fens.map((fen, idx) => ({ fen, idx, playedLan: targetMoves[idx] }));
         const results = new Array(fens.length);
@@ -165,7 +201,7 @@ class ChessReviewEngine {
 
                 const itemTimer = setTimeout(() => {
                     try { worker.proc.stdin.write('stop\n'); } catch {}
-                    finishItem();
+                    setTimeout(finishItem, 200);
                 }, 3500);
 
                 function onData(chunk) {
@@ -197,7 +233,7 @@ class ChessReviewEngine {
                         const hasPlayedMove = item.playedLan ? curEval.some(ev => ev && ev.pv && ev.pv[0] === item.playedLan) : true;
                         if (!hasPlayedMove && item.playedLan) {
                             let targetBuf = '';
-                            onTargetFn = function(tChunk) {
+                            onTargetFn = function (tChunk) {
                                 targetBuf += tChunk.toString();
                                 if (targetBuf.includes('bestmove')) {
                                     worker.proc.stdout.removeListener('data', onTargetFn);
@@ -219,14 +255,14 @@ class ChessReviewEngine {
                                     if (latestTargetEval) {
                                         curEval.push(latestTargetEval);
                                     }
-                                    finishItem(curEval);
+                                    finishItem();
                                 }
                             };
                             worker.proc.stdout.on('data', onTargetFn);
                             worker.proc.stdin.write(`position fen ${item.fen}\n`);
                             worker.proc.stdin.write(`go depth ${depth} movetime 1500 searchmoves ${item.playedLan}\n`);
                         } else {
-                            finishItem(curEval);
+                            finishItem();
                         }
                     }
                 }
@@ -403,56 +439,31 @@ class ChessReviewEngine {
 
         console.log(`[ReviewPipeline] Analyzing ${allFens.length} positions with Deep Stockfish Pool (depth ${depth}, multiPV ${multiPv}, ${this.numWorkers} workers)...`);
         const targetMoves = gamePlies.map(p => p.lan);
-        const crypto = require('crypto');
-        const gameHash = crypto.createHash('md5').update(allFens.join('|')).digest('hex');
-        const cacheDir = path.join(__dirname, '.eval_cache');
-        if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
-        const cachePath = path.join(cacheDir, `pool_${gameHash}_d${depth}_mpv${multiPv}.json`);
-
-        let allEvals;
-        if (fs.existsSync(cachePath)) {
-            console.log(`[ReviewPipeline] Loaded cached Stockfish evaluations (${allFens.length} positions).`);
-            allEvals = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+        const tPoolStart = Date.now();
+        const allEvals = await this.evaluatePositionsPool(allFens, depth, multiPv, targetMoves, (p) => {
             if (onProgress) {
                 try {
+                    const elapsed = Math.max(0.1, (Date.now() - tPoolStart) / 1000);
+                    const rate = p.completed > 0 ? p.completed / elapsed : 0;
+                    const remaining = p.total - p.completed;
+                    const eta = rate > 0 ? Math.round(remaining / rate) : undefined;
+                    const plyIdx = p.idx;
+                    const currentPly = plyIdx > 0 && gamePlies[plyIdx - 1] ? gamePlies[plyIdx - 1] : null;
+
                     onProgress({
-                        completed: allFens.length,
-                        total: allFens.length,
-                        stage: 'Evaluations ready',
-                        elapsedSeconds: 0,
-                        etaSeconds: 0,
-                        speed: allFens.length
+                        completed: p.completed,
+                        total: p.total,
+                        san: currentPly ? currentPly.san : undefined,
+                        color: currentPly ? (currentPly.color === 'white' ? 'w' : 'b') : undefined,
+                        fen: p.fen,
+                        stage: p.completed < 8 ? 'Opening Book Recognition' : p.completed > p.total - 10 ? 'Endgame Conversion' : 'Middlegame Tactical Evaluation',
+                        elapsedSeconds: Math.round(elapsed),
+                        etaSeconds: eta,
+                        speed: Number(rate.toFixed(1))
                     });
                 } catch {}
             }
-        } else {
-            const tPoolStart = Date.now();
-            allEvals = await this.evaluatePositionsPool(allFens, depth, multiPv, targetMoves, (p) => {
-                if (onProgress) {
-                    try {
-                        const elapsed = Math.max(0.1, (Date.now() - tPoolStart) / 1000);
-                        const rate = p.completed > 0 ? p.completed / elapsed : 0;
-                        const remaining = p.total - p.completed;
-                        const eta = rate > 0 ? Math.round(remaining / rate) : undefined;
-                        const plyIdx = p.idx;
-                        const currentPly = plyIdx > 0 && gamePlies[plyIdx - 1] ? gamePlies[plyIdx - 1] : null;
-
-                        onProgress({
-                            completed: p.completed,
-                            total: p.total,
-                            san: currentPly ? currentPly.san : undefined,
-                            color: currentPly ? (currentPly.color === 'white' ? 'w' : 'b') : undefined,
-                            fen: p.fen,
-                            stage: p.completed < 8 ? 'Opening Book Recognition' : p.completed > p.total - 10 ? 'Endgame Conversion' : 'Middlegame Tactical Evaluation',
-                            elapsedSeconds: Math.round(elapsed),
-                            etaSeconds: eta,
-                            speed: Number(rate.toFixed(1))
-                        });
-                    } catch {}
-                }
-            });
-            fs.writeFileSync(cachePath, JSON.stringify(allEvals));
-        }
+        });
         const evalTime = ((Date.now() - t0) / 1000).toFixed(2);
         console.log(`[ReviewPipeline] Stockfish evaluation finished in ${evalTime}s.`);
 
@@ -462,7 +473,7 @@ class ChessReviewEngine {
                 onProgress({
                     completed: allFens.length,
                     total: allFens.length,
-                    stage: 'Calculating CAPS2 Accuracy & Coach Feedback',
+                    stage: 'Calculating CAPS2 Accuracy & Classifications',
                     elapsedSeconds: elapsed,
                     etaSeconds: 1,
                     speed: 0
@@ -498,7 +509,9 @@ class ChessReviewEngine {
 
                         for (const ev of allEvals[0] || []) {
                             if (!ev || !ev.pv || ev.pv.length === 0) continue;
-                            const pvStr = ev.pv.join(' ');
+                            const validPv = getValidPvPrefix(allFens[0], ev.pv);
+                            if (validPv.length === 0) continue;
+                            const pvStr = validPv.join(' ');
                             if (ev.mateIn !== null && ev.mateIn !== undefined) {
                                 engine.postMessage(`variation ${pvStr} mate ${ev.mateIn} depth ${ev.depth}`);
                             } else if (ev.cp !== null && ev.cp !== undefined) {
@@ -509,10 +522,13 @@ class ChessReviewEngine {
                         for (let i = 0; i < gamePlies.length; i++) {
                             const ply = gamePlies[i];
                             engine.postMessage(`push ${ply.lan}${ply.isBook ? ' isBook' : ''}`);
+                            const fenAfter = allFens[i + 1];
                             const evalsAfter = allEvals[i + 1] || [];
                             for (const ev of evalsAfter) {
                                 if (!ev || !ev.pv || ev.pv.length === 0) continue;
-                                const pvStr = ev.pv.join(' ');
+                                const validPv = getValidPvPrefix(fenAfter, ev.pv);
+                                if (validPv.length === 0) continue;
+                                const pvStr = validPv.join(' ');
                                 if (ev.mateIn !== null && ev.mateIn !== undefined) {
                                     engine.postMessage(`variation ${pvStr} mate ${ev.mateIn} depth ${ev.depth}`);
                                 } else if (ev.cp !== null && ev.cp !== undefined) {
@@ -534,7 +550,7 @@ class ChessReviewEngine {
         const ceeTime = ((Date.now() - tCee) / 1000).toFixed(2);
         console.log(`[ReviewPipeline] CEE classification finished in ${ceeTime}s.`);
 
-        // 3. Format classified moves using Authoritative 2026 Expected Points Model
+        // 3. Format classified moves using Authoritative 2026 Expected Points Model & CEE
         const classifiedMoves = [];
         const rawPositions = ceeRes.positions || [];
         let lastMoveClassification = undefined;
@@ -578,14 +594,15 @@ class ChessReviewEngine {
                 }
             }
 
+            const rawCls = normalizeCeeClassification(pos.classificationName);
             const res = classifyMove({
                 playerScoreBefore,
                 playerScoreAfter,
                 playerRating: playerElo,
                 isBestMove,
-                isBookMove: Boolean(ply.isBook),
-                isForced: ply.numLegal === 1,
-                isSacrifice: pos.classificationName === 'brilliant',
+                isBookMove: Boolean(ply.isBook || rawCls === 'book'),
+                isForced: ply.numLegal === 1 || rawCls === 'forced',
+                isSacrifice: rawCls === 'brilliant',
                 piecesCount,
                 opponentPreviousRating: lastMoveClassification,
                 secondBestScore,
@@ -593,10 +610,16 @@ class ChessReviewEngine {
                 bookComment: ply.isBook ? (ply.opening?.name || 'Standard opening book move.') : undefined
             });
 
-            const classification = res.classification;
-            const difference = res.deltaE;
-            const caps2 = res.accuracy;
-            const comment = res.comment;
+            // Anchor classification to CEE authoritative result if available, fallback to classification tree
+            const classification = rawCls || res.classification;
+            const difference = (pos.difference !== undefined && pos.difference !== null) ? pos.difference : res.deltaE;
+            const caps2 = (pos.caps2 !== undefined && pos.caps2 !== null) ? pos.caps2 : res.accuracy;
+            
+            // 1-line concise badge text description
+            let comment = res.comment;
+            if (!comment && CLASSIFICATION_COMMENTS[classification]) {
+                comment = CLASSIFICATION_COMMENTS[classification][0];
+            }
             lastMoveClassification = classification;
 
             const score = isWhite ? (playerScoreAfter / 100) : (-playerScoreAfter / 100);
@@ -635,8 +658,8 @@ class ChessReviewEngine {
             for (const m of moves) {
                 if (m.color !== color) continue;
                 let c = (m.classification || '').toLowerCase();
-                if (c === 'last book') c = 'book';
-                if (c === 'great_find' || c === 'great find') c = 'great';
+                if (c === 'last book' || c === 'lastbook') c = 'book';
+                if (c === 'great_find' || c === 'great find' || c === 'greatfind') c = 'great';
                 if (c === 'incorrect') c = 'miss';
                 if (c === 'forced') c = 'best';
                 if (counts[c] !== undefined) counts[c]++;
@@ -658,8 +681,12 @@ class ChessReviewEngine {
             return Number(Math.max(0, Math.min(100, totalScore / nonBookMoves.length)).toFixed(1));
         };
 
-        const whiteAccuracy = calculatePlayerAccuracy(classifiedMoves, 'white');
-        const blackAccuracy = calculatePlayerAccuracy(classifiedMoves, 'black');
+        const whiteAccuracy = (ceeRes.CAPS?.white?.all !== undefined && ceeRes.CAPS.white.all !== null)
+            ? Number(ceeRes.CAPS.white.all.toFixed(1))
+            : calculatePlayerAccuracy(classifiedMoves, 'white');
+        const blackAccuracy = (ceeRes.CAPS?.black?.all !== undefined && ceeRes.CAPS.black.all !== null)
+            ? Number(ceeRes.CAPS.black.all.toFixed(1))
+            : calculatePlayerAccuracy(classifiedMoves, 'black');
 
         // Universal Single-Game Performance Rating per Article 10773754
         const calculateGameRating = (color, acc, elo, tallyObj) => {
