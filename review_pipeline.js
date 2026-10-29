@@ -701,12 +701,10 @@ class ChessReviewEngine {
 
         // Universal Single-Game Performance Rating per Article 10773754
         const calculateGameRating = (color, acc, elo, tallyObj) => {
-            const tallies = tallyObj || {};
             const playerElo = elo || 1500;
-            const expectedAcc = Math.min(95, Math.max(55, 68 + (playerElo - 1000) * 0.015));
-            const deltaAcc = (acc - expectedAcc) * 26;
-            const deltaErr = -((tallies.blunder || 0) * 110) - ((tallies.mistake || 0) * 45) - ((tallies.miss || 0) * 25);
-            const performance = playerElo + deltaAcc + deltaErr;
+            const expectedAcc = Math.min(94, Math.max(52, 60 + (playerElo - 600) * 0.018));
+            const deltaAcc = (acc - expectedAcc) * 32;
+            const performance = playerElo + deltaAcc;
             return Math.max(100, Math.min(3200, Math.round(performance / 50) * 50));
         };
 
