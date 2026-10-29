@@ -822,7 +822,7 @@ export function parsePGN(
                         moves: history.map(h => ({ san: h.san, lan: h.from + h.to + (h.promotion || ''), color: h.color === 'w' ? 'white' : 'black' })),
                         whiteElo,
                         blackElo,
-                        depth: 18,
+                        depth: 22,
                         multiPv: 2,
                         stream: true
                     }),

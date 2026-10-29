@@ -27,7 +27,7 @@ async function runUnseenVerification() {
         pgn: fischerPgn,
         whiteElo: 2500,
         blackElo: 2600,
-        depth: 18,
+        depth: 22,
         multiPv: 2
     });
 
@@ -65,7 +65,7 @@ async function runUnseenVerification() {
         pgn: amateurPgn,
         whiteElo: 1250,
         blackElo: 1200,
-        depth: 18,
+        depth: 22,
         multiPv: 2
     });
 

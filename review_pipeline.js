@@ -98,7 +98,7 @@ class ChessReviewEngine {
         this.numWorkers = numWorkers;
     }
 
-    async evaluatePositionsPool(fens, depth = 18, multiPv = 2, targetMoves = [], onProgress = null) {
+    async evaluatePositionsPool(fens, depth = 22, multiPv = 2, targetMoves = [], onProgress = null) {
         const workers = [];
         for (let i = 0; i < this.numWorkers; i++) {
             const proc = spawn(this.sfPath);
@@ -289,7 +289,7 @@ class ChessReviewEngine {
         return results;
     }
 
-    async analyzeGame({ pgn, moves, startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', whiteElo = 1500, blackElo = 1500, depth = 18, multiPv = 2, onProgress = null }) {
+    async analyzeGame({ pgn, moves, startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', whiteElo = 1500, blackElo = 1500, depth = 22, multiPv = 2, onProgress = null }) {
         const t0 = Date.now();
 
         // 1. Reconstruct positions and moves
@@ -615,14 +615,12 @@ class ChessReviewEngine {
             });
 
             // Authoritative Brilliant/Great parity:
-            // 1. Brilliant: CEE says brilliant OR tree detects sound sacrifice in contested position
-            // 2. Great: CEE says great (greatFind) OR tree confirms sole good move (Multi-PV gap) / decisive turnaround
-            // 3. Fallback: CEE classification or tree classification
-            const classification = (rawCls === 'brilliant' || res.classification === 'brilliant')
-                ? 'brilliant'
-                : (rawCls === 'great' || res.classification === 'great')
-                ? 'great'
-                : (rawCls || res.classification);
+            // 1. CEE raw classification is primary authority (including CEE's 'great' and 'best' classifications)
+            // 2. Brilliant: Upgrade to brilliant if CEE says brilliant OR tree detects a verified sound sacrifice
+            let classification = rawCls || res.classification;
+            if (classification !== 'brilliant' && res.classification === 'brilliant') {
+                classification = 'brilliant';
+            }
             const difference = (pos.difference !== undefined && pos.difference !== null) ? pos.difference : res.deltaE;
             const caps2 = (pos.caps2 !== undefined && pos.caps2 !== null) ? pos.caps2 : res.accuracy;
             
