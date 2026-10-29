@@ -13,6 +13,7 @@ const ecoBook = Object.keys(ecoMap).length > 0
     : (fs.existsSync(ecoBookPath) ? new Set(JSON.parse(fs.readFileSync(ecoBookPath, 'utf8'))) : new Set());
 
 // Load Authoritative 2026 Chess.com Move Classification Tree & Expected Points Model
+const { isSacrifice } = require('./src/engine/sacrifice.ts');
 const {
     classifyMove,
     winExpectancy,
@@ -384,7 +385,8 @@ class ChessReviewEngine {
                     afterFen,
                     color: m.color === 'w' ? 'white' : 'black',
                     numLegal,
-                    isBook
+                    isBook,
+                    moveObj: m
                 });
             }
         } else if (moves && moves.length > 0) {
@@ -430,7 +432,8 @@ class ChessReviewEngine {
                     afterFen,
                     color: matched.color === 'w' ? 'white' : 'black',
                     numLegal,
-                    isBook
+                    isBook,
+                    moveObj: matched
                 });
             }
         } else {
@@ -595,6 +598,7 @@ class ChessReviewEngine {
             }
 
             const rawCls = normalizeCeeClassification(pos.classificationName);
+            const isSac = Boolean(rawCls === 'brilliant' || (ply.moveObj && isSacrifice(ply.moveObj)));
             const res = classifyMove({
                 playerScoreBefore,
                 playerScoreAfter,
@@ -602,7 +606,7 @@ class ChessReviewEngine {
                 isBestMove,
                 isBookMove: Boolean(ply.isBook || rawCls === 'book'),
                 isForced: ply.numLegal === 1 || rawCls === 'forced',
-                isSacrifice: rawCls === 'brilliant',
+                isSacrifice: isSac,
                 piecesCount,
                 opponentPreviousRating: lastMoveClassification,
                 secondBestScore,
@@ -610,8 +614,15 @@ class ChessReviewEngine {
                 bookComment: ply.isBook ? (ply.opening?.name || 'Standard opening book move.') : undefined
             });
 
-            // Anchor classification to CEE authoritative result if available, fallback to classification tree
-            const classification = rawCls || res.classification;
+            // Authoritative Brilliant/Great parity:
+            // 1. Brilliant: CEE says brilliant OR tree detects sound sacrifice in contested position
+            // 2. Great: CEE says great (greatFind) OR tree confirms sole good move (Multi-PV gap) / decisive turnaround
+            // 3. Fallback: CEE classification or tree classification
+            const classification = (rawCls === 'brilliant' || res.classification === 'brilliant')
+                ? 'brilliant'
+                : (rawCls === 'great' || res.classification === 'great')
+                ? 'great'
+                : (rawCls || res.classification);
             const difference = (pos.difference !== undefined && pos.difference !== null) ? pos.difference : res.deltaE;
             const caps2 = (pos.caps2 !== undefined && pos.caps2 !== null) ? pos.caps2 : res.accuracy;
             

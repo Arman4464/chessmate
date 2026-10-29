@@ -266,7 +266,7 @@ export function classifyMove(params: ClassificationParams): ClassificationResult
     //        We are also more generous in defining a piece sacrifice for newer players
     //        compared to those who are higher-rated."
     // =========================================================================
-    const isContestedBefore = playerScoreBefore <= 400 && beforeE <= 0.88;
+    const isContestedBefore = playerScoreBefore <= 400 || (secondBestScore !== undefined && secondBestScore <= 250) || beforeE <= 0.85;
     // Rating generosity for piece sacrifices
     const maxSacDeltaE = playerRating < 1300 ? 0.045 : (playerRating < 1700 ? 0.035 : 0.025);
     const minSacAfterE = playerRating < 1300 ? 0.35 : 0.40;
@@ -333,17 +333,20 @@ export function classifyMove(params: ClassificationParams): ClassificationResult
 
     // Criterion 3: Finding the Only Good Move in a position (Multi-PV 2 gap)
     let isOnlyGoodMove = false;
-    if (secondBestScore !== undefined && isBestMove && playerScoreAfter >= -80 && isContestedBefore) {
+    if (secondBestScore !== undefined && isBestMove && playerScoreAfter >= -80) {
         const secondBestE = winExpectancy(secondBestScore, playerRating);
-        const gapE = Math.max(0, beforeE - secondBestE);
-        const gapCp = Math.max(0, playerScoreBefore - secondBestScore);
+        // Compare Candidate #1 (best move) score minus Candidate #2 (runner-up) score!
+        const gapE = Math.max(0, afterE - secondBestE);
+        const gapCp = Math.max(0, playerScoreAfter - secondBestScore);
         
         // Rating-adaptive gap threshold per Article 8572705:
-        // Generous for newer players, strict for masters
-        const requiredGapE = playerRating < 1200 ? 0.09 : (playerRating < 1800 ? 0.12 : 0.14);
-        const requiredGapCp = playerRating < 1200 ? 90 : (playerRating < 1800 ? 115 : 140);
+        // Generous for newer players (75 cp / 0.08 E), stricter for masters (125 cp / 0.13 E)
+        const requiredGapE = playerRating < 1200 ? 0.08 : (playerRating < 1800 ? 0.10 : 0.13);
+        const requiredGapCp = playerRating < 1200 ? 75 : (playerRating < 1800 ? 100 : 125);
 
-        if (gapE >= requiredGapE || gapCp >= requiredGapCp) {
+        // The move is 'the only good move' if the gap is decisive AND candidate #2 is not also effortlessly winning
+        const isCriticalPosition = secondBestScore <= 300 || (playerScoreAfter >= 100 && secondBestScore <= 0);
+        if ((gapE >= requiredGapE || gapCp >= requiredGapCp) && isCriticalPosition) {
             isOnlyGoodMove = true;
         }
     }

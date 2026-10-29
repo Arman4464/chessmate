@@ -2,6 +2,7 @@ import { players, AnalysisProgress } from "@/context/analyze";
 import { BISHOP, Chess, Color, KNIGHT, Move, PAWN, PieceSymbol, QUEEN, ROOK, Square, WHITE } from "chess.js";
 import { SetStateAction } from "react";
 import { StockfishEngine } from "./engineWorker";
+import { isSacrifice } from "./sacrifice";
 import {
     MoveClassification,
     classifyMove,
@@ -12,6 +13,7 @@ import {
 
 export type { StockfishEngine };
 export { winExpectancy, caps2MoveAccuracy, calculateDeltaE, classifyMove };
+export { isSacrifice } from "./sacrifice";
 
 export type result = '1-0' | '0-1' | '1/2-1/2' | '*' | ''
 
@@ -468,107 +470,7 @@ async function analyze(program: StockfishEngine | Worker, fen: string, depth: nu
     }
 }
 
-function getAttackersDefenders(chess: Chess, color: Color, to: Square) {
-    const attackers = chess.attackers(to, invertColor(color))
-    const legalAttackers = attackers.filter(attacker => chess.moves({ verbose: true }).findIndex(move => move.from === attacker && move.to === to) !== -1)
-    const legalAttackersPieces = legalAttackers.map(attacker => chess.get(attacker))
-
-    let defenders, legalDefenders, legalDefendersPieces
-    if (attackers.length === 1) {
-        const testChess = new Chess(chess.fen())
-        try {
-            testChess.move({ from: attackers[0], to })
-        } catch { }
-
-        defenders = testChess.attackers(to, color)
-        legalDefenders = defenders.filter(defender => {
-            if (testChess.moves({ verbose: true }).findIndex(move => move.from === defender && move.to === to) === -1) {
-                return false
-            }
-            return true
-        })
-        legalDefendersPieces = legalDefenders.map(defender => chess.get(defender))
-    } else {
-        defenders = chess.attackers(to, color)
-        legalDefenders = defenders.filter(defender => {
-            for (const attacker of legalAttackers) {
-                const testChess = new Chess(chess.fen())
-                try {
-                    testChess.move({ from: attacker, to: to })
-                } catch { }
-    
-                if (testChess.moves({ verbose: true }).findIndex(move => move.from === defender && move.to === to) === -1) {
-                    return false
-                }
-            }
-            return true
-        })
-        legalDefendersPieces = legalDefenders.map(defender => chess.get(defender))
-    }
-
-    return { attackers: { squares: legalAttackers, pieces: legalAttackersPieces, length: legalAttackers.length }, defenders: { squares: legalDefenders, pieces: legalDefendersPieces, length: legalDefenders.length } }
-}
-
-function couldBeSaved(chess: Chess, square: Square, color: Color) {
-    if (!chess.attackers(square, color).length) {
-        for (const move of chess.moves({ verbose: true })) {
-            if (move.from !== square) return true
-        }
-    } else {
-        for (const move of chess.moves({ verbose: true, square: square })) {
-            const testChess = new Chess(move.after)
-            if (!testChess.attackers(move.to, color).length) return true
-        }
-    }
-
-    return false
-}
-
-export function isSacrifice(move: Move) {
-    const chess = new Chess(move.after)
-    const chessBefore = new Chess(move.before)
-
-    const sacrifying: {
-        square: Square,
-        type: PieceSymbol,
-        color: Color,
-    }[] = []
-
-    const board = chess.board()
-    for (const row of board) {
-        for (const square of row) {
-            if (!square || square.type === PAWN) continue
-            if (square.color !== move.color) continue
-
-            const { attackers, defenders } = getAttackersDefenders(chess, move.color, square.square)
-
-            if (!defenders.length && attackers.length && (!move.captured || move.captured === PAWN)) {
-                sacrifying.push(square)
-                continue
-            }
-            if ((square.type === KNIGHT || square.type === BISHOP) && (!move.captured || move.captured === PAWN) && attackers.pieces.findIndex(piece => piece?.type === PAWN) !== -1) {
-                sacrifying.push(square)
-                continue
-            }
-            if (square.type === ROOK && attackers.length && (move.captured !== ROOK && move.captured !== QUEEN) && !(attackers.length === 1 && (attackers.pieces[0]?.type === QUEEN || attackers.pieces[0]?.type === ROOK) && defenders.length) && !(defenders.length && (move.captured === KNIGHT || move.captured === BISHOP))) {
-                sacrifying.push(square)
-                continue
-            }
-            if (square.type === QUEEN && attackers.length && move.captured !== QUEEN && !(attackers.length === 1 && attackers.pieces[0]?.type === QUEEN && defenders.length) && !(attackers.length === 1 && attackers.pieces[0]?.type === ROOK && move.captured === ROOK && defenders.length)) {
-                sacrifying.push(square)
-                continue
-            }
-        }
-    }
-
-    for (const square of sacrifying) {
-        const beforeSquare = chessBefore.get(square.square)?.color === chess.get(square.square)?.color && chessBefore.get(square.square)?.type === chess.get(square.square)?.type ? square.square : move.from
-
-        if (couldBeSaved(chessBefore, beforeSquare, invertColor(move.color))) return true
-    }
-
-    return false
-}
+// isSacrifice is imported from ./sacrifice
 
 function isForced(move: Move) {
     const chess = new Chess(move.before)
