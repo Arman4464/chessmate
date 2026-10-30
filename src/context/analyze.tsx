@@ -64,6 +64,12 @@ type tabs = 'analyze' | 'selectGame' | 'summary' | 'moves'
 
 const abortControllerInstance = new AbortController()
 
+import { KeyMoment } from "@/components/menu/analysis/keyMoments/types"
+import { extractKeyMoments } from "@/components/menu/analysis/keyMoments/keyMomentsUtil"
+import { RetryState, defaultRetryState } from "@/components/menu/analysis/retry/types"
+import { playRetrySuccessSound, playRetryFailSound } from "@/utils/sound"
+import { Chess } from "chess.js"
+
 export const AnalyzeContext = createContext<{
     data: [Data, Dispatch<SetStateAction<Data>>],
     pageState: [pageState, Dispatch<SetStateAction<pageState>>],
@@ -84,7 +90,18 @@ export const AnalyzeContext = createContext<{
     customLine: [CustomLine, Dispatch<SetStateAction<CustomLine>>],
     returnedToNormalGame: [square[]|null, Dispatch<SetStateAction<square[]|null>>]
     analyzingMove: [boolean, Dispatch<SetStateAction<boolean>>],
-    depth: [number, Dispatch<SetStateAction<number>>]
+    depth: [number, Dispatch<SetStateAction<number>>],
+    keyMoments: [KeyMoment[], Dispatch<SetStateAction<KeyMoment[]>>],
+    keyMomentIndex: [number, Dispatch<SetStateAction<number>>],
+    isKeyMomentsMode: [boolean, Dispatch<SetStateAction<boolean>>],
+    retryState: [RetryState, Dispatch<SetStateAction<RetryState>>],
+    startRetry: (plyIndex: number) => void,
+    exitRetry: () => void,
+    revealRetrySolution: () => void,
+    submitRetryMove: (from: string, to: string, promotion?: string) => boolean,
+    goToKeyMoment: (index: number) => void,
+    nextKeyMoment: () => void,
+    prevKeyMoment: () => void,
     gameController: Controller,
 }>({
     data: [{format: "fen", string: ""}, () => { }],
@@ -107,6 +124,17 @@ export const AnalyzeContext = createContext<{
     returnedToNormalGame: [null, () => { }],
     analyzingMove: [false, () => { }],
     depth: [14, () => { }],
+    keyMoments: [[], () => { }],
+    keyMomentIndex: [-1, () => { }],
+    isKeyMomentsMode: [false, () => { }],
+    retryState: [defaultRetryState, () => { }],
+    startRetry: () => { },
+    exitRetry: () => { },
+    revealRetrySolution: () => { },
+    submitRetryMove: () => false,
+    goToKeyMoment: () => { },
+    nextKeyMoment: () => { },
+    prevKeyMoment: () => { },
     gameController: { back: () => { }, forward: () => { }, last: () => { }, first: () => { }, play: () => { }, pause: () => { }, togglePlay: () => { } },
 })
 
@@ -131,6 +159,132 @@ export default function AnalyzeContextProvider(props: { children: React.ReactNod
     const [returnedToNormalGame, setReturnedToNormalGame] = useState<square[]|null>(null)
     const [analyzingMove, setAnalyzingMove] = useState(false)
     const [depth, setDepth] = useState(14)
+    const [keyMoments, setKeyMoments] = useState<KeyMoment[]>([])
+    const [keyMomentIndex, setKeyMomentIndex] = useState(-1)
+    const [isKeyMomentsMode, setIsKeyMomentsMode] = useState(false)
+    const [retryState, setRetryState] = useState<RetryState>(defaultRetryState)
+
+    useEffect(() => {
+        const moments = extractKeyMoments(game)
+        setKeyMoments(moments)
+        setKeyMomentIndex(-1)
+        setIsKeyMomentsMode(false)
+        setRetryState(defaultRetryState)
+    }, [game])
+
+    useEffect(() => {
+        if (keyMoments.length > 0) {
+            const foundIdx = keyMoments.findIndex(km => km.plyIndex === moveNumber)
+            if (foundIdx !== -1) {
+                setKeyMomentIndex(foundIdx)
+            }
+        }
+    }, [moveNumber, keyMoments])
+
+    const goToKeyMoment = (index: number) => {
+        if (index >= 0 && index < keyMoments.length) {
+            setKeyMomentIndex(index)
+            setIsKeyMomentsMode(true)
+            setTab('moves')
+            setAnimation(true)
+            setMoveNumber(keyMoments[index].plyIndex)
+        }
+    }
+
+    const nextKeyMoment = () => {
+        if (keyMomentIndex < keyMoments.length - 1) {
+            goToKeyMoment(keyMomentIndex + 1)
+        }
+    }
+
+    const prevKeyMoment = () => {
+        if (keyMomentIndex > 0) {
+            goToKeyMoment(keyMomentIndex - 1)
+        }
+    }
+
+    const startRetry = (plyIndex: number) => {
+        if (!game || plyIndex <= 0 || plyIndex >= game.length) return
+        const mistakeMove = game[plyIndex]
+        const prevMove = game[plyIndex - 1]
+        if (!mistakeMove || !prevMove) return
+
+        const targetBest = prevMove.bestMoveSan || ''
+        setRetryState({
+            active: true,
+            plyIndex,
+            fen: prevMove.fen || '',
+            mistakeSan: mistakeMove.san || '',
+            mistakeRating: mistakeMove.moveRating || 'mistake',
+            targetBestMoveSan: targetBest,
+            status: 'idle',
+            attempts: 0,
+            showSolution: false,
+            feedbackMessage: `You played ${mistakeMove.san}, which was a ${mistakeMove.moveRating}. Can you find the best move?`,
+        })
+        setMoveNumber(plyIndex - 1)
+        setAnimation(false)
+    }
+
+    const exitRetry = () => {
+        const restorePly = retryState.plyIndex || moveNumber
+        setRetryState(defaultRetryState)
+        setMoveNumber(restorePly)
+        setAnimation(false)
+    }
+
+    const revealRetrySolution = () => {
+        setRetryState(prev => ({
+            ...prev,
+            showSolution: true,
+            feedbackMessage: prev.targetBestMoveSan
+                ? `The best move was ${prev.targetBestMoveSan}.`
+                : "Look for the key tactical breakthrough."
+        }))
+    }
+
+    const submitRetryMove = (from: string, to: string, promotion?: string): boolean => {
+        if (!retryState.active || !retryState.fen) return false
+
+        try {
+            const chess = new Chess(retryState.fen)
+            const attempted = chess.move({ from, to, promotion: promotion || 'q' })
+            if (!attempted) {
+                playRetryFailSound()
+                return false
+            }
+
+            const target = (retryState.targetBestMoveSan || '').trim()
+            const candidateSan = attempted.san.trim()
+            const moveLan = from + to
+
+            const isBest = candidateSan === target ||
+                moveLan.toLowerCase() === target.toLowerCase() ||
+                candidateSan.replace(/[+#x=QNRB]/g, '') === target.replace(/[+#x=QNRB]/g, '')
+
+            if (isBest) {
+                playRetrySuccessSound()
+                setRetryState(prev => ({
+                    ...prev,
+                    status: 'success',
+                    feedbackMessage: 'Best Move! You found it!',
+                }))
+                return true
+            } else {
+                playRetryFailSound()
+                setRetryState(prev => ({
+                    ...prev,
+                    status: 'incorrect',
+                    attempts: prev.attempts + 1,
+                    feedbackMessage: "Try again! That wasn't the best continuation.",
+                }))
+                return false
+            }
+        } catch {
+            playRetryFailSound()
+            return false
+        }
+    }
 
     const moveNumberRef = useRef(moveNumber)
     const customLineRef = useRef(customLine)
@@ -215,7 +369,40 @@ export default function AnalyzeContextProvider(props: { children: React.ReactNod
     }
 
     return (
-        <AnalyzeContext.Provider value={{ data: [data, setData], pageState: [pageState, setPageState], game: [game, setGame], players: [players, setPlayers], moveNumber: [moveNumber, setMoveNumber], forward: [forward, setForward], white: [white, setWhite], animation: [animation, setAnimation], playing: [playing, setPlaying], time: [time, setTime], materialAdvantage: [materialAdvantage, setMaterialAdvantage], result: [result, setResult], progress: [progress, setProgress], analysisProgress: [analysisProgress, setAnalysisProgress], tab: [tab, setTab], analyzeController: [analyzeController, setAnalyzeController], customLine: [customLine, setCustomLine], returnedToNormalGame: [returnedToNormalGame, setReturnedToNormalGame], analyzingMove: [analyzingMove, setAnalyzingMove], depth: [depth, setDepth], gameController }}>
+        <AnalyzeContext.Provider value={{
+            data: [data, setData],
+            pageState: [pageState, setPageState],
+            game: [game, setGame],
+            players: [players, setPlayers],
+            moveNumber: [moveNumber, setMoveNumber],
+            forward: [forward, setForward],
+            white: [white, setWhite],
+            animation: [animation, setAnimation],
+            playing: [playing, setPlaying],
+            time: [time, setTime],
+            materialAdvantage: [materialAdvantage, setMaterialAdvantage],
+            result: [result, setResult],
+            progress: [progress, setProgress],
+            analysisProgress: [analysisProgress, setAnalysisProgress],
+            tab: [tab, setTab],
+            analyzeController: [analyzeController, setAnalyzeController],
+            customLine: [customLine, setCustomLine],
+            returnedToNormalGame: [returnedToNormalGame, setReturnedToNormalGame],
+            analyzingMove: [analyzingMove, setAnalyzingMove],
+            depth: [depth, setDepth],
+            keyMoments: [keyMoments, setKeyMoments],
+            keyMomentIndex: [keyMomentIndex, setKeyMomentIndex],
+            isKeyMomentsMode: [isKeyMomentsMode, setIsKeyMomentsMode],
+            retryState: [retryState, setRetryState],
+            startRetry,
+            exitRetry,
+            revealRetrySolution,
+            submitRetryMove,
+            goToKeyMoment,
+            nextKeyMoment,
+            prevKeyMoment,
+            gameController,
+        }}>
             {props.children}
         </AnalyzeContext.Provider>
     )

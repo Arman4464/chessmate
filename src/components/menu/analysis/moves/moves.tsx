@@ -41,6 +41,8 @@ export function getLastBookMove(moves: move[]) {
     return -1
 }
 
+import KeyMomentsStepper from "../keyMoments/keyMomentsStepper"
+
 export default function Moves(props: {
     moves: move[]
     container: HTMLElement
@@ -108,12 +110,15 @@ export default function Moves(props: {
 
     return (
         <div className="flex flex-col h-full overflow-hidden select-none">
+            {/* Key Moments Stepper */}
+            <KeyMomentsStepper />
+
             {/* Coach Speech Bubble Card */}
             <div className="w-full flex-shrink-0">
                 <Comments
                     rating={analyzingMove ? previousMove?.moveRating : move?.moveRating}
                     moveSan={analyzingMove ? previousMove?.san : move?.san}
-                    bestMoveSan={analyzingMove ? previousMove?.bestMoveSan : move?.bestMoveSan}
+                    bestMoveSan={previousMove?.bestMoveSan}
                     evaluation={analyzingMove ? previousMove?.evaluation ?? previousMove?.previousStaticEvals?.[0] ?? ["cp", "0"] : move?.evaluation ?? move?.previousStaticEvals?.[0] ?? ["cp", "0"]}
                     white={analyzingMove ? previousMove?.color === WHITE : move?.color === WHITE}
                     comment={analyzingMove ? previousMove?.comment : move?.comment}

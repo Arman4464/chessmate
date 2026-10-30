@@ -1,7 +1,11 @@
 "use client"
 
+import React, { useContext } from "react"
 import RatingSVG from "@/components/svg/rating"
+import CoachAvatar from "@/components/svg/coachAvatar"
 import { moveRating } from "@/engine/stockfish"
+import { AnalyzeContext } from "@/context/analyze"
+import RetryTrainer from "../retry/retryTrainer"
 
 const RATING_TITLES: Record<moveRating, string> = {
     brilliant: "Brilliant",
@@ -68,7 +72,7 @@ export function FormatEval(props: { evaluation: string[], white: boolean, smalle
 
     return (
         <span
-            className={`font-mono font-extrabold tabular-nums select-none tracking-tight inline-flex items-center justify-center border ${
+            className={`font-mono font-extrabold tabular-nums select-none tracking-tight inline-flex items-center justify-center border rounded-lg ${
                 smaller ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-1 text-xs md:text-sm'
             } ${
                 isWhiteAdvantage
@@ -100,14 +104,28 @@ export default function Comments(props: {
     comment?: string
 }) {
     const { rating, moveSan, bestMoveSan, evaluation, white, comment } = props
+    const analyzeContext = useContext(AnalyzeContext)
+    const [retryState] = analyzeContext.retryState
+    const { startRetry } = analyzeContext
+    const [moveNumber] = analyzeContext.moveNumber
+
+    // If Retry mode is active, display the interactive RetryTrainer
+    if (retryState.active) {
+        return <RetryTrainer />
+    }
 
     if (!rating || !moveSan) {
         return (
             <div className="w-full px-4 pt-3 pb-2 select-none">
-                <div className="w-full bg-[#262421] border border-white/10 text-neutral-300 p-3.5 shadow-md flex items-center gap-3">
-                    <p className="text-xs md:text-sm font-medium text-neutral-400">
-                        Select a move to view detailed positional analysis and tactical breakdown.
-                    </p>
+                <div className="flex items-start gap-3">
+                    <div className="flex-shrink-0 pt-1">
+                        <CoachAvatar size={48} expression="analytical" />
+                    </div>
+                    <div className="relative flex-1 bg-[#262421] border border-white/10 text-neutral-300 p-3.5 rounded-2xl shadow-md flex items-center gap-3 before:content-[''] before:absolute before:top-4 before:-left-2 before:w-0 before:h-0 before:border-t-[8px] before:border-t-transparent before:border-b-[8px] before:border-b-transparent before:border-r-[10px] before:border-r-[#262421]">
+                        <p className="text-xs md:text-sm font-medium text-neutral-400">
+                            Select a move to view detailed positional analysis and tactical breakdown from the coach.
+                        </p>
+                    </div>
                 </div>
             </div>
         )
@@ -115,39 +133,75 @@ export default function Comments(props: {
 
     const title = RATING_TITLES[rating] || rating
     const ratingColor = RATING_COLORS[rating] || '#81b64c'
-    const showBestMove = bestMoveSan && bestMoveSan !== moveSan && rating !== 'best' && rating !== 'book' && rating !== 'brilliant' && rating !== 'forced'
+    const showBestMove = Boolean(bestMoveSan && bestMoveSan !== moveSan && rating !== 'best' && rating !== 'book' && rating !== 'brilliant' && rating !== 'forced')
+    const canRetry = (rating === 'blunder' || rating === 'mistake' || rating === 'miss') && moveNumber > 0
     const explanation = comment || RATING_DEFAULT_EXPLANATIONS[rating] || ''
+
+    const expression = (rating === 'blunder' || rating === 'mistake' || rating === 'miss')
+        ? 'concerned'
+        : (rating === 'brilliant' || rating === 'great' || rating === 'best')
+        ? 'happy'
+        : 'analytical'
 
     return (
         <div className="w-full px-4 pt-3 pb-2 select-none">
-            {/* Analysis Insight Card */}
-            <div className="w-full bg-[#262421] text-white p-3.5 shadow-xl flex flex-col gap-2.5 border border-white/10">
-                {/* Header: Badge & Move SAN on left, Score Pill on right */}
-                <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-2.5">
-                    <div className="flex items-center gap-2">
-                        <RatingSVG draggable rating={rating} size={24} />
-                        <span className="font-extrabold text-base md:text-lg" style={{ color: ratingColor }}>
-                            {title}
-                        </span>
-                        <span className="font-bold text-white text-sm md:text-base">
-                            {moveSan}
-                        </span>
-                    </div>
-                    <FormatEval evaluation={evaluation} white={white} />
+            <div className="flex items-start gap-3">
+                {/* Coach Avatar */}
+                <div className="flex-shrink-0 pt-1">
+                    <CoachAvatar size={48} expression={expression} />
                 </div>
 
-                {/* Analysis explanation */}
-                <p className="text-xs md:text-sm text-neutral-300 leading-relaxed font-normal">
-                    {explanation}
-                </p>
-
-                {/* Best move suggestion if sub-optimal */}
-                {showBestMove && (
-                    <div className="mt-0.5 flex items-center gap-2 bg-white/5 border border-white/10 px-3 py-1.5 text-xs font-medium text-neutral-300 w-fit">
-                        <span className="text-neutral-400 font-semibold">Best was</span>
-                        <span className="font-extrabold text-[#81b64c] tracking-wide">{formatBestMove(bestMoveSan)}</span>
+                {/* Speech Bubble Container with pointer tail */}
+                <div className="relative flex-1 bg-[#262421] text-white p-3.5 rounded-2xl shadow-xl flex flex-col gap-2.5 border border-white/10 before:content-[''] before:absolute before:top-4 before:-left-2 before:w-0 before:h-0 before:border-t-[8px] before:border-t-transparent before:border-b-[8px] before:border-b-transparent before:border-r-[10px] before:border-r-[#262421]">
+                    {/* Header: Badge & Move SAN on left, Score Pill on right */}
+                    <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-2.5">
+                        <div className="flex items-center gap-2">
+                            <RatingSVG draggable rating={rating} size={24} />
+                            <span className="font-extrabold text-base md:text-lg" style={{ color: ratingColor }}>
+                                {title}
+                            </span>
+                            <span className="font-bold text-white text-sm md:text-base">
+                                {moveSan}
+                            </span>
+                        </div>
+                        <FormatEval evaluation={evaluation} white={white} />
                     </div>
-                )}
+
+                    {/* Analysis explanation */}
+                    <p className="text-xs md:text-sm text-neutral-300 leading-relaxed font-normal">
+                        {explanation}
+                    </p>
+
+                    {/* Sub-optimal action row: Best alternative & Retry button */}
+                    {(showBestMove || canRetry) && (
+                        <div className="mt-0.5 flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/5">
+                            {showBestMove && (
+                                <div className="flex items-center gap-1.5 bg-white/5 border border-white/10 px-2.5 py-1.5 rounded-xl text-xs font-medium text-neutral-300">
+                                    <span className="text-neutral-400 font-semibold">Best was</span>
+                                    <span className="font-extrabold text-[#81b64c] tracking-wide flex items-center gap-1">
+                                        <svg className="w-3.5 h-3.5 fill-[#81b64c]" viewBox="0 0 24 24">
+                                            <path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/>
+                                        </svg>
+                                        {formatBestMove(bestMoveSan)}
+                                    </span>
+                                </div>
+                            )}
+                            {canRetry && (
+                                <button
+                                    type="button"
+                                    onClick={() => startRetry(moveNumber)}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#81b64c] hover:bg-[#8cc352] active:scale-95 text-white font-black text-xs rounded-xl shadow-md transition-all cursor-pointer ml-auto"
+                                    title="Try finding the best move from this position"
+                                >
+                                    <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24">
+                                        <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/>
+                                    </svg>
+                                    <span>Retry</span>
+                                </button>
+                            )}
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     )

@@ -9,6 +9,9 @@
  * - Article 10773754: "How is Game Rating calculated in Game Review?"
  */
 
+import { Chess } from "chess.js";
+import type { Square, PieceSymbol, Color } from "chess.js";
+
 export type MoveClassification =
     | "forced"
     | "brilliant"
@@ -47,19 +50,291 @@ export interface ClassificationResult {
     accuracy: number;            // CAPS2 individual move accuracy (0 - 100)
 }
 
+export interface ClassificationTallies {
+    brilliant?: number;
+    great?: number;
+    best?: number;
+    excellent?: number;
+    good?: number;
+    book?: number;
+    inaccuracy?: number;
+    mistake?: number;
+    miss?: number;
+    blunder?: number;
+    forced?: number;
+    [key: string]: number | undefined;
+}
+
+export type MoveTallies = ClassificationTallies;
+export type ClassificationTally = ClassificationTallies;
+
+export interface PerformanceRatingResult {
+    white: number;
+    black: number;
+}
+
+export interface SEEResult {
+    gain: number;
+    isSacrifice: boolean;
+}
+
+/**
+ * Standard piece values in centipawns for Static Exchange Evaluation (SEE)
+ */
+export const SEE_PIECE_VALUES: Record<PieceSymbol, number> = {
+    p: 100,
+    n: 300,
+    b: 300,
+    r: 500,
+    q: 900,
+    k: 20000
+};
+
+/**
+ * Static Exchange Evaluation (SEE) Minimax Algorithm
+ * Evaluates the net material outcome (in centipawns) of a sequence of captures on a target square `to`.
+ *
+ * @param chess Chess instance representing the position BEFORE the move is executed
+ * @param from Square from which the initial piece moves
+ * @param to Target square where captures occur
+ * @returns Net material balance (in centipawns) for the player initiating the sequence
+ */
+export function see(chess: Chess, from: Square, to: Square): number {
+    const movingPiece = chess.get(from);
+    if (!movingPiece) return 0;
+
+    const targetPiece = chess.get(to);
+    const gain: number[] = [];
+
+    // Gain for first move (d = 0)
+    let initialGain = targetPiece ? SEE_PIECE_VALUES[targetPiece.type] : 0;
+    // Handle pawn promotion value boost on initial capture/quiet move
+    if (movingPiece.type === 'p' && (to[1] === '8' || to[1] === '1')) {
+        initialGain += (SEE_PIECE_VALUES.q - SEE_PIECE_VALUES.p);
+    }
+    gain.push(initialGain);
+
+    const c = new Chess(chess.fen());
+    try {
+        c.move({ from, to, promotion: 'q' });
+    } catch {
+        return 0;
+    }
+
+    // Capture sequence loop
+    let depth = 0;
+    const maxDepth = 32;
+
+    while (depth < maxDepth) {
+        depth++;
+        const victim = c.get(to);
+        if (!victim) break;
+
+        const victimValue = SEE_PIECE_VALUES[victim.type];
+
+        // Find all legal captures to square `to` for the side currently to move
+        const legalCaptures = c.moves({ verbose: true }).filter(m => m.to === to);
+        if (legalCaptures.length === 0) break;
+
+        // Least Valuable Attacker (LVA) selection
+        legalCaptures.sort((a, b) => {
+            const valA = SEE_PIECE_VALUES[a.piece];
+            const valB = SEE_PIECE_VALUES[b.piece];
+            return valA - valB;
+        });
+
+        const bestCapture = legalCaptures[0];
+        let captureGain = victimValue;
+        if (bestCapture.piece === 'p' && (to[1] === '8' || to[1] === '1')) {
+            captureGain += (SEE_PIECE_VALUES.q - SEE_PIECE_VALUES.p);
+        }
+
+        gain.push(captureGain);
+        c.move(bestCapture);
+    }
+
+    // Minimax rollback from end to beginning
+    // If no counter-captures exist, the initial gain is retained completely
+    if (gain.length === 1) {
+        return gain[0];
+    }
+
+    // Intermediate nodes can choose to stand pat if capturing loses material
+    let current = gain[gain.length - 1];
+    for (let d = gain.length - 2; d >= 1; d--) {
+        current = Math.max(0, gain[d] - current);
+    }
+
+    // Initial move was already played, so opponent gets their optimal outcome
+    return gain[0] - current;
+}
+
+/**
+ * Static Exchange Evaluation wrapper accepting either FEN string or Chess instance
+ */
+export function staticExchangeEvaluation(
+    fenOrChess: string | Chess,
+    from: string,
+    to: string
+): number {
+    const chess = typeof fenOrChess === 'string' ? new Chess(fenOrChess) : new Chess(fenOrChess.fen());
+    return see(chess, from as Square, to as Square);
+}
+
+/**
+ * Checks whether a piece on a square could have been saved prior to the move
+ */
+function couldBeSaved(chess: Chess, square: Square, color: Color): boolean {
+    const oppColor = color === 'w' ? 'b' : 'w';
+    const attackers = chess.attackers(square, oppColor);
+    if (attackers.length === 0) {
+        return true;
+    }
+
+    // 1. Move piece to a safe square
+    for (const move of chess.moves({ verbose: true, square })) {
+        const testChess = new Chess(move.after);
+        if (testChess.attackers(move.to, oppColor).length === 0) {
+            return true;
+        }
+    }
+
+    // 2. Interpose or defend so that opponent SEE becomes non-positive
+    for (const move of chess.moves({ verbose: true })) {
+        if (move.from === square) continue;
+        const testChess = new Chess(move.after);
+        const oppAttackers = testChess.attackers(square, oppColor);
+        if (oppAttackers.length === 0) return true;
+
+        const oppCaptures = testChess.moves({ verbose: true }).filter(m => m.to === square);
+        if (oppCaptures.length > 0) {
+            oppCaptures.sort((a, b) => SEE_PIECE_VALUES[a.piece] - SEE_PIECE_VALUES[b.piece]);
+            if (see(testChess, oppCaptures[0].from, square) <= 0) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Evaluates whether a move is an authentic piece or exchange sacrifice:
+ * - Direct sacrifice of minor, rook, or queen (SEE < 0)
+ * - Exchange sacrifice (Rook for minor/pawn)
+ * - Uncovered / voluntary en-prise sacrifice of a minor, rook, or queen that could have been saved
+ */
+export function isAuthenticSacrifice(
+    chessBefore: Chess,
+    move: {
+        from: Square | string;
+        to: Square | string;
+        after?: string;
+        piece?: PieceSymbol | string;
+        captured?: PieceSymbol | string;
+        color: Color | string;
+        san?: string;
+    }
+): boolean {
+    const from = move.from as Square;
+    const to = move.to as Square;
+    const movingPiece = chessBefore.get(from);
+    const color = (move.color === 'w' || move.color === 'white') ? 'w' : 'b';
+
+    // 1. Direct sacrifice on the destination square
+    if (movingPiece) {
+        const pieceType = movingPiece.type;
+
+        // Minor piece sacrifice (Knight / Bishop)
+        if (pieceType === 'n' || pieceType === 'b') {
+            const netSee = see(chessBefore, from, to);
+            if (netSee <= -150) {
+                return true;
+            }
+        }
+
+        // Rook sacrifice / Exchange sacrifice
+        if (pieceType === 'r') {
+            const netSee = see(chessBefore, from, to);
+            // Giving up Rook for minor (500 - 300 = -200) or pawn (-400) or clean (-500)
+            if (netSee <= -150) {
+                return true;
+            }
+        }
+
+        // Queen sacrifice
+        if (pieceType === 'q') {
+            const netSee = see(chessBefore, from, to);
+            // Giving up Queen for Rook (900 - 500 = -400) or minor (-600) or clean (-900)
+            if (netSee <= -150) {
+                return true;
+            }
+        }
+    }
+
+    // 2. Discovered / voluntary en-prise piece left to be taken
+    let chessAfter: Chess;
+    if (move.after) {
+        chessAfter = new Chess(move.after);
+    } else {
+        chessAfter = new Chess(chessBefore.fen());
+        try {
+            chessAfter.move({ from, to, promotion: 'q' });
+        } catch {
+            return false;
+        }
+    }
+
+    const oppColor = color === 'w' ? 'b' : 'w';
+    const board = chessAfter.board();
+
+    for (const row of board) {
+        for (const sq of row) {
+            if (!sq) continue;
+            if (sq.color !== color) continue;
+            // Pawns do not qualify for Brilliant sacrifices per Article 8572705
+            if (sq.type === 'p' || sq.type === 'k') continue;
+
+            const oppCaptures = chessAfter.moves({ verbose: true }).filter(m => m.to === sq.square);
+            if (oppCaptures.length > 0) {
+                oppCaptures.sort((a, b) => SEE_PIECE_VALUES[a.piece] - SEE_PIECE_VALUES[b.piece]);
+                const oppBestCapture = oppCaptures[0];
+                const oppGain = see(chessAfter, oppBestCapture.from, sq.square);
+
+                // Opponent wins material by capturing this piece
+                if (oppGain >= 150) {
+                    // Check if it could have been saved before this move
+                    const beforeSquare = chessBefore.get(sq.square)?.type === sq.type &&
+                                         chessBefore.get(sq.square)?.color === sq.color
+                        ? sq.square
+                        : from;
+
+                    if (couldBeSaved(chessBefore, beforeSquare, color)) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
 /**
  * Logistic Win Expectancy Model E(cp, R)
  * Maps centipawn evaluations to winning probability in [0.00, 1.00]:
  * 1.00 = 100% win, 0.50 = dead even, 0.00 = 0% win.
- * Dynamically scaled by player rating per Chess.com Classification V2.
+ * Dynamically scaled by player rating per Chess.com Classification V2:
+ * s(R) = clamp(0.60, 1.40, 1.35 - 0.35 * (rating / 1000))
+ * Higher-rated players convert smaller centipawn advantages into wins with a steeper curve.
  */
 export function winExpectancy(centipawns: number, rating: number = 1500): number {
     if (centipawns >= 50000) return 1.0;
     if (centipawns <= -50000) return 0.0;
 
     // Rating scaling parameter s(R) calibrated against official review data
-    // Masters convert smaller centipawn advantages; novices require larger leads.
-    const s = Math.max(0.60, Math.min(1.40, 0.65 + 0.25 * (rating / 1000)));
+    // Masters convert smaller centipawn advantages (smaller s -> steeper curve); novices require larger leads (larger s).
+    const s = Math.max(0.60, Math.min(1.40, 1.35 - 0.35 * (rating / 1000)));
     return 1.0 / (1.0 + Math.pow(10, -centipawns / (400 * s)));
 }
 
@@ -130,6 +405,52 @@ export function caps2MoveAccuracy(
     const k = 0.055;
     const raw = 103.1668 * Math.exp(-k * totalLoss * rFactor) - 3.1668;
     return Math.max(0, Math.min(100, Math.round(raw * 10) / 10));
+}
+
+/**
+ * Canonical CAPS2 Game Accuracy Power-Mean Aggregation
+ * Per Article 8708970 & ORIGINAL_REQUEST.md:
+ * Blends power-mean (p = 0.25, 75% weight) with arithmetic mean (25% weight).
+ * Excludes book moves and forced moves.
+ */
+export function calculateCaps2GameAccuracy(
+    moveAccuracies: number[],
+    p: number = 0.25,
+    powerWeight: number = 0.75
+): number {
+    if (!moveAccuracies || moveAccuracies.length === 0) return 100.0;
+
+    const clamped = moveAccuracies.map(acc => Math.max(0.0, Math.min(100.0, acc)));
+    const sumP = clamped.reduce((sum, acc) => sum + Math.pow(Math.max(acc, 0.1), p), 0);
+    const powerMean = Math.pow(sumP / clamped.length, 1 / p);
+    const arithMean = clamped.reduce((sum, acc) => sum + acc, 0) / clamped.length;
+
+    const blended = powerWeight * powerMean + (1 - powerWeight) * arithMean;
+    return Number(Math.max(0.0, Math.min(100.0, blended)).toFixed(1));
+}
+
+/**
+ * Universal Single-Game Estimated Performance Rating (Article 10773754)
+ * Calibrated on the Elo scale and rounded to the nearest 50 rating points:
+ * 1. ExpectedAcc = clamp(55, 95, 68 + (Elo - 1000) * 0.015)
+ * 2. deltaAcc = (accuracy - ExpectedAcc) * 26
+ * 3. deltaErr = -(blunders * 110) - (mistakes * 45) - (misses * 25)
+ * 4. performance = clamp(100, 3200, roundTo50(Elo + deltaAcc + deltaErr))
+ */
+export function calculatePerformanceRating(
+    playerElo: number = 1500,
+    accuracy: number,
+    tallies: ClassificationTallies = {}
+): number {
+    const validElo = Math.max(100, Math.min(3200, playerElo || 1500));
+    const expectedAcc = Math.min(95.0, Math.max(55.0, 68.0 + (validElo - 1000) * 0.015));
+    const deltaAcc = (accuracy - expectedAcc) * 26;
+    const blunders = tallies.blunder || 0;
+    const mistakes = tallies.mistake || 0;
+    const misses = tallies.miss || 0;
+    const deltaErr = -(blunders * 110) - (mistakes * 45) - (misses * 25);
+    const performance = validElo + deltaAcc + deltaErr;
+    return Math.max(100, Math.min(3200, Math.round(performance / 50) * 50));
 }
 
 /**
@@ -259,14 +580,33 @@ export function classifyMove(params: ClassificationParams): ClassificationResult
     }
 
     // =========================================================================
-    // 3. Brilliant Move (!!) - Sound Piece Sacrifice (Article 8572705)
+    // 3. Brilliant Move (!!) - Sound Piece Sacrifice (Article 8572705 & 8584089)
     // Rule: "A Brilliant move is when you find a good piece sacrifice.
     //        You should not be in a bad position after a Brilliant move.
     //        You should not be completely winning even if you hadn't found the move."
+    // 4 Strict Criteria:
+    // 1. Piece/exchange sacrifice (minors, rooks, queens) evaluated via SEE
+    // 2. Objective soundness: deltaE <= 0.025, afterE >= 0.40, playerScoreAfter >= -30
+    // 3. Contested preconditions: playerScoreBefore <= 350 cp and beforeE <= 0.88
+    // 4. Unique endgame continuation: < 7 pieces requires Multi-PV 2 gap evaluation
+    //    Delta E_gap >= 0.12 or second-best < 0.40
     // =========================================================================
     const isContestedBefore = playerScoreBefore <= 350 && beforeE <= 0.88;
     const isSoundSacrifice = deltaE <= 0.025 && afterE >= 0.40 && playerScoreAfter >= -30;
-    const satisfiesEndgame = piecesCount >= 7 || isBestMove;
+
+    let satisfiesEndgame = false;
+    if (piecesCount >= 7) {
+        satisfiesEndgame = true;
+    } else {
+        // In endgame (< 7 non-king pieces), must be the sole unique winning path
+        if (secondBestScore !== undefined) {
+            const secondBestE = winExpectancy(secondBestScore, playerRating);
+            const deltaEGap = Math.max(0, afterE - secondBestE);
+            satisfiesEndgame = isBestMove && (deltaEGap >= 0.12 || secondBestE < 0.40);
+        } else {
+            satisfiesEndgame = isBestMove;
+        }
+    }
 
     if (isSacrifice && isSoundSacrifice && isContestedBefore && satisfiesEndgame) {
         return {
@@ -284,11 +624,15 @@ export function classifyMove(params: ClassificationParams): ClassificationResult
     // 4. Miss (🔭) - Overlooked Tactical Punish, Mate, or Blown Lead (Article 8572705)
     // Rule: "A Miss is when you fail to capitalize on your opponent's mistake
     //        and miss the opportunity to gain a winning position."
+    // Triggers:
+    // - Missed forced checkmate sequence
+    // - Blown winning advantage (dropping from winning lead into equal/worse)
+    // - Failure to punish opponent's blunder, mistake, or miss
     // =========================================================================
     const missedMate = playerScoreBefore >= 90000 && playerScoreAfter < 90000;
-    const blewWinningAdvantage = playerScoreBefore >= 250 && playerScoreAfter <= 50 && (deltaCp >= 200 || deltaE >= 0.20) && !isBestMove;
+    const blewWinningAdvantage = playerScoreBefore >= 200 && playerScoreAfter <= 50 && (deltaCp >= 150 || deltaE >= 0.15) && !isBestMove;
     const opponentErrored = opponentPreviousRating === 'mistake' || opponentPreviousRating === 'blunder' || opponentPreviousRating === 'miss';
-    const failedToPunish = opponentErrored && (deltaE >= 0.12 || deltaCp >= 130) && playerScoreAfter < 100 && !isBestMove;
+    const failedToPunish = opponentErrored && (deltaE >= 0.10 || deltaCp >= 100) && playerScoreAfter < 150 && !isBestMove;
 
     if (!isBestMove && (missedMate || blewWinningAdvantage || failedToPunish)) {
         return {

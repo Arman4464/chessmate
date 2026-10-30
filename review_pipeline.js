@@ -17,7 +17,12 @@ const {
     classifyMove,
     winExpectancy,
     calculateDeltaE,
-    caps2MoveAccuracy
+    caps2MoveAccuracy,
+    calculateCaps2GameAccuracy,
+    calculatePerformanceRating,
+    isAuthenticSacrifice,
+    staticExchangeEvaluation,
+    see
 } = require('./src/engine/classificationTree.ts');
 
 
@@ -578,6 +583,17 @@ class ChessReviewEngine {
                 }
             }
 
+            const chessBefore = new Chess(ply.beforeFen);
+            const moveFrom = ply.lan.slice(0, 2);
+            const moveTo = ply.lan.slice(2, 4);
+            const isSac = pos.classificationName === 'brilliant' || isAuthenticSacrifice(chessBefore, {
+                from: moveFrom,
+                to: moveTo,
+                after: ply.afterFen,
+                color: ply.color,
+                san: ply.san
+            });
+
             const res = classifyMove({
                 playerScoreBefore,
                 playerScoreAfter,
@@ -585,7 +601,7 @@ class ChessReviewEngine {
                 isBestMove,
                 isBookMove: Boolean(ply.isBook),
                 isForced: ply.numLegal === 1,
-                isSacrifice: pos.classificationName === 'brilliant',
+                isSacrifice: Boolean(isSac),
                 piecesCount,
                 opponentPreviousRating: lastMoveClassification,
                 secondBestScore,
@@ -647,33 +663,22 @@ class ChessReviewEngine {
         const whiteTallies = computeTallies(classifiedMoves, 'white');
         const blackTallies = computeTallies(classifiedMoves, 'black');
 
-        // Calculate overall CAPS2 player game accuracy
+        // Calculate overall CAPS2 player game accuracy using canonical power-mean blend (p = 0.25)
         const calculatePlayerAccuracy = (moves, color) => {
             const playerMoves = moves.filter(m => m.color === color);
             if (playerMoves.length === 0) return 100.0;
             
             const nonBookMoves = playerMoves.filter(m => m.classification !== 'book' && m.classification !== 'forced');
             if (nonBookMoves.length === 0) return 100.0;
-            const totalScore = nonBookMoves.reduce((s, m) => s + (m.caps2 !== undefined ? m.caps2 : 100), 0);
-            return Number(Math.max(0, Math.min(100, totalScore / nonBookMoves.length)).toFixed(1));
+            return calculateCaps2GameAccuracy(nonBookMoves.map(m => m.caps2 !== undefined ? m.caps2 : 100), 0.25, 0.75);
         };
 
         const whiteAccuracy = calculatePlayerAccuracy(classifiedMoves, 'white');
         const blackAccuracy = calculatePlayerAccuracy(classifiedMoves, 'black');
 
         // Universal Single-Game Performance Rating per Article 10773754
-        const calculateGameRating = (color, acc, elo, tallyObj) => {
-            const tallies = tallyObj || {};
-            const playerElo = elo || 1500;
-            const expectedAcc = Math.min(95, Math.max(55, 68 + (playerElo - 1000) * 0.015));
-            const deltaAcc = (acc - expectedAcc) * 26;
-            const deltaErr = -((tallies.blunder || 0) * 110) - ((tallies.mistake || 0) * 45) - ((tallies.miss || 0) * 25);
-            const performance = playerElo + deltaAcc + deltaErr;
-            return Math.max(100, Math.min(3200, Math.round(performance / 50) * 50));
-        };
-
-        const whiteRating = calculateGameRating('white', whiteAccuracy, whiteElo, whiteTallies);
-        const blackRating = calculateGameRating('black', blackAccuracy, blackElo, blackTallies);
+        const whiteRating = calculatePerformanceRating(whiteElo, whiteAccuracy, whiteTallies);
+        const blackRating = calculatePerformanceRating(blackElo, blackAccuracy, blackTallies);
 
         const totalTime = ((Date.now() - t0) / 1000).toFixed(2);
         console.log(`[ReviewPipeline] Full review completed in ${totalTime}s! White: ${whiteAccuracy}%, Black: ${blackAccuracy}%, Game Rating: W=${whiteRating}, B=${blackRating}\n`);

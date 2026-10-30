@@ -513,8 +513,9 @@ export default function Game() {
 
             if (isMobile) {
                 // Mobile viewport: header/nav at top (56px), players (84px), status (24px), bottom tabs (180px)
+                // Width reserve: 36px page/card margins + 28px eval bar + 8px gap = 72px
                 maxAvailableH = window.innerHeight - 340
-                maxAvailableW = window.innerWidth - 36
+                maxAvailableW = window.innerWidth - 72
             } else if (isTablet) {
                 maxAvailableH = window.innerHeight - 150
                 maxAvailableW = window.innerWidth - 380 - 48
@@ -526,7 +527,7 @@ export default function Game() {
             }
 
             const rawSize = Math.min(maxAvailableH, maxAvailableW)
-            const boundedSize = Math.max(280, Math.min(760, rawSize))
+            const boundedSize = Math.max(240, Math.min(760, rawSize))
             const newBoardSize = Math.floor(boundedSize / 8) * 8
 
             setBoardSize(newBoardSize)

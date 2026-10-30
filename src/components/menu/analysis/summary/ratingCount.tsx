@@ -35,6 +35,30 @@ const ratingColorMap: Record<moveRating, string> = {
     forced: '#9e9d9c',
 }
 
+interface CountPillProps {
+    count: number
+    color: string
+}
+
+function CountPill({ count, color }: CountPillProps) {
+    if (count > 0) {
+        return (
+            <div
+                className="min-w-[32px] h-6 px-2.5 rounded-full flex items-center justify-center text-xs font-black tabular-nums text-white shadow-sm transition-transform active:scale-95"
+                style={{ backgroundColor: color }}
+            >
+                {count}
+            </div>
+        )
+    }
+
+    return (
+        <div className="min-w-[32px] h-6 px-2 rounded-full flex items-center justify-center text-xs font-bold tabular-nums bg-white/5 text-neutral-500 border border-white/5">
+            0
+        </div>
+    )
+}
+
 export default function RatingCount(props: { moves: move[] }) {
     const [counter, setCounter] = useState<{ w: Record<string, number>, b: Record<string, number> }>({ w: {}, b: {} })
     const { moves } = props
@@ -62,51 +86,53 @@ export default function RatingCount(props: { moves: move[] }) {
     }, [moves])
 
     return (
-        <div className="w-full px-4 py-1 flex flex-col gap-1 select-none">
-            {ratings.map(rating => {
-                const titleRating = title(rating)
-                const color = ratingColorMap[rating] || '#ffffff'
-                const wCount = counter.w[rating] ?? 0
-                const bCount = counter.b[rating] ?? 0
+        <div className="w-full bg-[#262421] border border-white/10 rounded-xl p-4 shadow-md flex flex-col gap-2 select-none">
+            {/* Header */}
+            <div className="grid grid-cols-[1fr_64px_64px] items-center pb-2 border-b border-white/10 text-[11px] font-black text-neutral-400 uppercase tracking-wider px-2">
+                <span>Move Classification</span>
+                <span className="text-center flex items-center justify-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-white inline-block" /> White
+                </span>
+                <span className="text-center flex items-center justify-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-neutral-600 border border-white/30 inline-block" /> Black
+                </span>
+            </div>
 
-                // If both are 0, we can still show or dim slightly
-                const hasMoves = wCount > 0 || bCount > 0
+            {/* List of classifications */}
+            <div className="flex flex-col gap-1">
+                {ratings.map(rating => {
+                    const titleRating = title(rating)
+                    const color = ratingColorMap[rating] || '#ffffff'
+                    const wCount = counter.w[rating] ?? 0
+                    const bCount = counter.b[rating] ?? 0
+                    const hasMoves = wCount > 0 || bCount > 0
 
-                return (
-                    <div
-                        key={rating}
-                        className={`grid grid-cols-[80px_1fr_1fr] items-center py-1 hover:bg-white/5 transition-colors ${
-                            hasMoves ? 'opacity-100' : 'opacity-40'
-                        }`}
-                    >
-                        {/* Rating Name & Icon */}
-                        <div className="flex items-center gap-1.5">
-                            <RatingSVG draggable className="select-none flex-shrink-0" rating={rating} size={18} />
-                            <span className="font-semibold text-xs text-neutral-300">{titleRating}</span>
+                    return (
+                        <div
+                            key={rating}
+                            className={`grid grid-cols-[1fr_64px_64px] items-center px-2 py-1.5 rounded-lg hover:bg-white/5 transition-colors ${
+                                hasMoves ? 'opacity-100' : 'opacity-45'
+                            }`}
+                        >
+                            {/* Classification Glyph & Label */}
+                            <div className="flex items-center gap-2.5 min-w-0">
+                                <RatingSVG draggable className="select-none flex-shrink-0" rating={rating} size={20} />
+                                <span className="font-bold text-xs text-neutral-200 truncate">{titleRating}</span>
+                            </div>
+
+                            {/* White Count Pill */}
+                            <div className="flex justify-center">
+                                <CountPill count={wCount} color={color} />
+                            </div>
+
+                            {/* Black Count Pill */}
+                            <div className="flex justify-center">
+                                <CountPill count={bCount} color={color} />
+                            </div>
                         </div>
-
-                        {/* White count */}
-                        <div className="flex justify-center">
-                            <span
-                                className="font-extrabold text-sm md:text-base tabular-nums select-none"
-                                style={{ color: wCount > 0 ? color : 'rgb(163, 163, 163)' }}
-                            >
-                                {wCount}
-                            </span>
-                        </div>
-
-                        {/* Black count */}
-                        <div className="flex justify-center">
-                            <span
-                                className="font-extrabold text-sm md:text-base tabular-nums select-none"
-                                style={{ color: bCount > 0 ? color : 'rgb(163, 163, 163)' }}
-                            >
-                                {bCount}
-                            </span>
-                        </div>
-                    </div>
-                )
-            })}
+                    )
+                })}
+            </div>
         </div>
     )
 }
