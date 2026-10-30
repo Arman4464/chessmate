@@ -210,7 +210,7 @@ export default function Form(props: {
                     onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setValue(e.currentTarget.value)}
                     ref={inputRef}
                     placeholder={inputPlaceholder}
-                    className="w-full px-3.5 py-3 text-sm md:text-base font-semibold border border-white/10 bg-[#1e1d1a] text-white placeholder-neutral-500 focus:outline-none focus:border-[#81b64c] transition-colors resize-none shadow-inner"
+                    className="w-full px-4 py-3.5 text-sm md:text-base font-semibold rounded-xl border border-white/15 bg-[#1e1d1a] text-white placeholder-neutral-500 focus:outline-none focus:border-[#81b64c] focus:ring-2 focus:ring-[#81b64c]/30 transition-all resize-none shadow-inner"
                 />
             </div>
 
@@ -222,7 +222,7 @@ export default function Form(props: {
                         e.preventDefault()
                         setSelecting(prev => !prev)
                     }}
-                    className="w-full h-12 px-4 bg-[#1e1d1a] hover:bg-white/5 border border-white/10 text-white font-bold text-sm md:text-base flex items-center justify-between transition-colors shadow-sm"
+                    className="w-full h-12 px-4 bg-[#1e1d1a] hover:bg-white/5 border border-white/15 rounded-xl text-white font-bold text-sm md:text-base flex items-center justify-between transition-all shadow-sm"
                 >
                     <div className="flex items-center gap-2.5">
                         <Image draggable={false} alt="icon" src={FORMATS[selected][1]} width={22} height={22} />
@@ -234,7 +234,7 @@ export default function Form(props: {
                 </button>
 
                 {isSelecting && (
-                    <div className="flex flex-col gap-3 p-3 bg-black/25 border border-white/5 mt-1 animate-fadeIn">
+                    <div className="flex flex-col gap-3 p-3.5 bg-black/30 border border-white/10 rounded-xl mt-1.5 shadow-lg animate-fadeIn">
                         <div>
                             <span className="text-xs font-bold text-neutral-400 uppercase tracking-wider block mb-2">Input Source</span>
                             <div className="grid grid-cols-3 gap-2">
@@ -284,7 +284,7 @@ export default function Form(props: {
             <button
                 type="submit"
                 disabled={loadingGame}
-                className="w-full h-14 mt-2 bg-[#81b64c] hover:bg-[#8cc352] active:scale-[0.98] text-white font-black text-lg shadow-lg transition-all flex items-center justify-center cursor-pointer select-none disabled:opacity-50"
+                className="w-full h-14 mt-2 bg-[#81b64c] hover:bg-[#8cc352] active:scale-[0.98] text-white font-black text-lg rounded-xl shadow-xl transition-all flex items-center justify-center cursor-pointer select-none disabled:opacity-50 hover:shadow-[0_0_20px_rgba(129,182,76,0.35)]"
             >
                 {analyzeValue}
             </button>

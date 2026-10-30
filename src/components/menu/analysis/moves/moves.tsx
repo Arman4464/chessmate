@@ -7,6 +7,7 @@ import Comments from "./comments"
 import { WHITE } from "chess.js"
 import GameChart from "../gameChart"
 import RatingSVG from "@/components/svg/rating"
+import GameButtons from "../gameButtons"
 import { getMoves } from "@/components/game/game"
 
 export const RATING_TEXT_COLORS: Record<string, string> = {
@@ -173,7 +174,7 @@ export default function Moves(props: {
             </ul>
 
             {/* Bottom Evaluation Chart */}
-            <div className="flex-shrink-0 w-full px-4 pt-1 pb-2 border-t border-white/5 flex justify-center">
+            <div className="flex-shrink-0 w-full px-4 pt-1 pb-1 border-t border-white/5 flex justify-center">
                 <GameChart
                     container={container}
                     moves={moves}
@@ -182,6 +183,11 @@ export default function Moves(props: {
                     setAnimation={setAnimation}
                     setForward={setForward}
                 />
+            </div>
+
+            {/* Stepper Controls in Sidebar */}
+            <div className="flex-shrink-0 w-full border-t border-white/10 bg-[#211f1c]">
+                <GameButtons />
             </div>
         </div>
     )

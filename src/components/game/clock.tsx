@@ -8,7 +8,8 @@ export default function Clock(props: { white: boolean, colorMoving: Color, child
 
     return (
         <div
-            className={`flex items-center gap-2 px-3 py-1.5 font-mono font-bold text-sm md:text-base select-none transition-all duration-150 ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-mono font-bold text-sm md:text-base select-none shadow-md transition-all duration-150 ${
+
                 moving
                     ? 'bg-[#2b2825] text-white ring-2 ring-[#81b64c] shadow-[0_0_12px_rgba(129,182,76,0.3)] opacity-100'
                     : 'bg-[#1e1d1a] text-neutral-300 border border-white/10 opacity-75'
