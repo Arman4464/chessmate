@@ -14,7 +14,7 @@ function Brilliant({ size }: { size: number }) {
             <g id="layer1">
             <ellipse
                 style={{
-                fill: "#04b8ad",
+                fill: "#26c2a3",
                 fillOpacity: 1,
                 stroke: "none",
                 strokeWidth: 0.999462,
@@ -275,7 +275,7 @@ function Best({ size }: { size: number }) {
             <g id="layer1">
             <circle
                 style={{
-                fill: "#96bc4b",
+                fill: "#81b64c",
                 fillOpacity: 1,
                 stroke: "none",
                 strokeWidth: 1.00135,
@@ -438,7 +438,7 @@ function Good({ size }: { size: number }) {
             <g id="layer1">
             <circle
                 style={{
-                fill: "#95af8a",
+                fill: "#a3b18a",
                 fillOpacity: 1,
                 stroke: "none",
                 strokeWidth: 1.00135,
@@ -503,7 +503,7 @@ function Book({ size }: { size: number }) {
             <ellipse
                 style={{
                 display: "inline",
-                fill: "#a98866",
+                fill: "#d5a47d",
                 fillOpacity: 1,
                 stroke: "none",
                 strokeWidth: 0.999462,
@@ -592,7 +592,7 @@ function Inaccuracy({ size }: { size: number }) {
             >
             <ellipse
                 style={{
-                fill: "#f7c045",
+                fill: "#f7c631",
                 fillOpacity: 1,
                 stroke: "none",
                 strokeWidth: 0.999462,
@@ -772,7 +772,7 @@ function Mistake({ size }: { size: number }) {
             >
             <ellipse
                 style={{
-                fill: "#e58f2a",
+                fill: "#ffa459",
                 fillOpacity: 1,
                 stroke: "none",
                 strokeWidth: 0.999462,
@@ -885,7 +885,7 @@ function Miss({ size }: { size: number }) {
             >
             <ellipse
                 style={{
-                fill: "#ee6b55",
+                fill: "#ff7769",
                 fillOpacity: 1,
                 stroke: "none",
                 strokeWidth: 0.999462,
@@ -952,7 +952,7 @@ function Blunder({ size }: { size: number }) {
             >
             <ellipse
                 style={{
-                fill: "#ca3531",
+                fill: "#fa412d",
                 fillOpacity: 1,
                 stroke: "none",
                 strokeWidth: 0.999462,
@@ -1223,7 +1223,7 @@ function Forced({ size }: { size: number }) {
             <ellipse
                 style={{
                 display: "inline",
-                fill: "#95af8a",
+                fill: "#9e9d9c",
                 fillOpacity: 1,
                 stroke: "none",
                 strokeWidth: 0.999462,

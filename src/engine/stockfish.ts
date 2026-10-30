@@ -7,11 +7,24 @@ import {
     classifyMove,
     calculateDeltaE,
     winExpectancy,
-    caps2MoveAccuracy
+    caps2MoveAccuracy,
+    calculateCaps2GameAccuracy,
+    calculatePerformanceRating,
+    ClassificationTallies
 } from "./classificationTree";
+import { isAuthenticSacrifice, see, staticExchangeEvaluation } from "./see";
 
 export type { StockfishEngine };
-export { winExpectancy, caps2MoveAccuracy, calculateDeltaE, classifyMove };
+export {
+    winExpectancy,
+    caps2MoveAccuracy,
+    calculateDeltaE,
+    classifyMove,
+    calculateCaps2GameAccuracy,
+    calculatePerformanceRating,
+    see,
+    staticExchangeEvaluation
+};
 
 export type result = '1-0' | '0-1' | '1/2-1/2' | '*' | ''
 
@@ -464,50 +477,9 @@ function couldBeSaved(chess: Chess, square: Square, color: Color) {
     return false
 }
 
-export function isSacrifice(move: Move) {
-    const chess = new Chess(move.after)
+export function isSacrifice(move: Move): boolean {
     const chessBefore = new Chess(move.before)
-
-    const sacrifying: {
-        square: Square,
-        type: PieceSymbol,
-        color: Color,
-    }[] = []
-
-    const board = chess.board()
-    for (const row of board) {
-        for (const square of row) {
-            if (!square || square.type === PAWN) continue
-            if (square.color !== move.color) continue
-
-            const { attackers, defenders } = getAttackersDefenders(chess, move.color, square.square)
-
-            if (!defenders.length && attackers.length && (!move.captured || move.captured === PAWN)) {
-                sacrifying.push(square)
-                continue
-            }
-            if ((square.type === KNIGHT || square.type === BISHOP) && (!move.captured || move.captured === PAWN) && attackers.pieces.findIndex(piece => piece?.type === PAWN) !== -1) {
-                sacrifying.push(square)
-                continue
-            }
-            if (square.type === ROOK && attackers.length && (move.captured !== ROOK && move.captured !== QUEEN) && !(attackers.length === 1 && (attackers.pieces[0]?.type === QUEEN || attackers.pieces[0]?.type === ROOK) && defenders.length) && !(defenders.length && (move.captured === KNIGHT || move.captured === BISHOP))) {
-                sacrifying.push(square)
-                continue
-            }
-            if (square.type === QUEEN && attackers.length && move.captured !== QUEEN && !(attackers.length === 1 && attackers.pieces[0]?.type === QUEEN && defenders.length) && !(attackers.length === 1 && attackers.pieces[0]?.type === ROOK && move.captured === ROOK && defenders.length)) {
-                sacrifying.push(square)
-                continue
-            }
-        }
-    }
-
-    for (const square of sacrifying) {
-        const beforeSquare = chessBefore.get(square.square)?.color === chess.get(square.square)?.color && chessBefore.get(square.square)?.type === chess.get(square.square)?.type ? square.square : move.from
-
-        if (couldBeSaved(chessBefore, beforeSquare, invertColor(move.color))) return true
-    }
-
-    return false
+    return isAuthenticSacrifice(chessBefore, move)
 }
 
 function isForced(move: Move) {
@@ -1082,19 +1054,55 @@ export function parsePGN(
             });
         }
 
-        // Compute overall CAPS2 game accuracy for local review mode
-        const whiteMoves = moves.filter(m => m.playedBy === 'w' && m.moveRating !== 'book' && m.moveRating !== 'forced')
-        const blackMoves = moves.filter(m => m.playedBy === 'b' && m.moveRating !== 'book' && m.moveRating !== 'forced')
-        const whiteAcc = whiteMoves.length > 0
-            ? Number((whiteMoves.reduce((acc, m) => acc + (m.accuracy ?? 100), 0) / whiteMoves.length).toFixed(1))
-            : 100.0
-        const blackAcc = blackMoves.length > 0
-            ? Number((blackMoves.reduce((acc, m) => acc + (m.accuracy ?? 100), 0) / blackMoves.length).toFixed(1))
-            : 100.0
+        // Compute overall CAPS2 game accuracy and Article 10773754 Performance Rating for local review mode
+        const computeTallies = (playerMoves: move[]): ClassificationTallies => {
+            const counts: ClassificationTallies = {
+                brilliant: 0,
+                great: 0,
+                best: 0,
+                excellent: 0,
+                good: 0,
+                book: 0,
+                inaccuracy: 0,
+                mistake: 0,
+                miss: 0,
+                blunder: 0,
+                forced: 0
+            };
+            for (const m of playerMoves) {
+                let r = m.moveRating;
+                if (r === 'forced') r = 'best';
+                if (r && counts[r] !== undefined) {
+                    counts[r] = (counts[r] || 0) + 1;
+                }
+            }
+            return counts;
+        };
 
-        if (players[0]) players[0].accuracy = whiteAcc
-        if (players[1]) players[1].accuracy = blackAcc
-        ;(metadata as any).accuracies = { white: whiteAcc, black: blackAcc }
+        const whiteAll = moves.filter(m => m.playedBy === 'w');
+        const blackAll = moves.filter(m => m.playedBy === 'b');
+        const whiteTallies = computeTallies(whiteAll);
+        const blackTallies = computeTallies(blackAll);
+
+        const whiteNonBookMoves = moves.filter(m => m.playedBy === 'w' && m.moveRating !== 'book' && m.moveRating !== 'forced');
+        const blackNonBookMoves = moves.filter(m => m.playedBy === 'b' && m.moveRating !== 'book' && m.moveRating !== 'forced');
+
+        const whiteAcc = calculateCaps2GameAccuracy(whiteNonBookMoves.map(m => m.accuracy ?? 100));
+        const blackAcc = calculateCaps2GameAccuracy(blackNonBookMoves.map(m => m.accuracy ?? 100));
+
+        const whitePerf = calculatePerformanceRating(whiteElo, whiteAcc, whiteTallies);
+        const blackPerf = calculatePerformanceRating(blackElo, blackAcc, blackTallies);
+
+        if (players[0]) {
+            players[0].accuracy = whiteAcc;
+            players[0].performanceRating = whitePerf;
+        }
+        if (players[1]) {
+            players[1].accuracy = blackAcc;
+            players[1].performanceRating = blackPerf;
+        }
+        ;(metadata as any).accuracies = { white: whiteAcc, black: blackAcc };
+        ;(metadata as any).performanceRatings = { white: whitePerf, black: blackPerf };
 
         resolve({ metadata, moves })
     })

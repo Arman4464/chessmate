@@ -63,3 +63,6 @@ dist
 *.exe
 stockfish/*.exe
 temp/
+
+# agent workspaces
+.agents/

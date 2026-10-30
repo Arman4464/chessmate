@@ -7,6 +7,7 @@ import Comments from "./comments"
 import { WHITE } from "chess.js"
 import GameChart from "../gameChart"
 import RatingSVG from "@/components/svg/rating"
+import GameButtons from "../gameButtons"
 import { getMoves } from "@/components/game/game"
 
 export const RATING_TEXT_COLORS: Record<string, string> = {
@@ -40,6 +41,8 @@ export function getLastBookMove(moves: move[]) {
     }
     return -1
 }
+
+import KeyMomentsStepper from "../keyMoments/keyMomentsStepper"
 
 export default function Moves(props: {
     moves: move[]
@@ -108,12 +111,15 @@ export default function Moves(props: {
 
     return (
         <div className="flex flex-col h-full overflow-hidden select-none">
+            {/* Key Moments Stepper */}
+            <KeyMomentsStepper />
+
             {/* Coach Speech Bubble Card */}
             <div className="w-full flex-shrink-0">
                 <Comments
                     rating={analyzingMove ? previousMove?.moveRating : move?.moveRating}
                     moveSan={analyzingMove ? previousMove?.san : move?.san}
-                    bestMoveSan={analyzingMove ? previousMove?.bestMoveSan : move?.bestMoveSan}
+                    bestMoveSan={previousMove?.bestMoveSan}
                     evaluation={analyzingMove ? previousMove?.evaluation ?? previousMove?.previousStaticEvals?.[0] ?? ["cp", "0"] : move?.evaluation ?? move?.previousStaticEvals?.[0] ?? ["cp", "0"]}
                     white={analyzingMove ? previousMove?.color === WHITE : move?.color === WHITE}
                     comment={analyzingMove ? previousMove?.comment : move?.comment}
@@ -168,7 +174,7 @@ export default function Moves(props: {
             </ul>
 
             {/* Bottom Evaluation Chart */}
-            <div className="flex-shrink-0 w-full px-4 pt-1 pb-2 border-t border-white/5 flex justify-center">
+            <div className="flex-shrink-0 w-full px-4 pt-1 pb-1 border-t border-white/5 flex justify-center">
                 <GameChart
                     container={container}
                     moves={moves}
@@ -177,6 +183,11 @@ export default function Moves(props: {
                     setAnimation={setAnimation}
                     setForward={setForward}
                 />
+            </div>
+
+            {/* Stepper Controls in Sidebar */}
+            <div className="flex-shrink-0 w-full border-t border-white/10 bg-[#211f1c]">
+                <GameButtons />
             </div>
         </div>
     )

@@ -9,6 +9,8 @@ import PieceSVG from "../svg/piece";
 import RatingSVG from "../svg/rating";
 import ResultSVG from "../svg/result";
 import Image from "next/image";
+import { AnalyzeContext } from "@/context/analyze";
+import { playBrilliantFanfare, playPromoteSound, playIllegalSound } from "@/utils/sound";
 
 interface filteredHighlightStyle {
     [key: string]: { color: string, rating: moveRating }
@@ -405,6 +407,9 @@ export default function Board(props: { cleanArrows: () => void, sacrifice?: bool
     const [coronation, setCoronation] = useState<coronation>({ choosing: false, movement: [] })
 
     const configContext = useContext(ConfigContext)
+    const analyzeContext = useContext(AnalyzeContext)
+    const [retryState] = analyzeContext.retryState
+    const { submitRetryMove } = analyzeContext
 
     const [boardTheme] = configContext.boardTheme
     const [usedRatings] = configContext.usedRatings
@@ -474,6 +479,10 @@ export default function Board(props: { cleanArrows: () => void, sacrifice?: bool
     useEffect(() => {
         if (!props.fen) return
         if (!boardSounds) return
+
+        if (forward && moveRating === 'brilliant') {
+            playBrilliantFanfare()
+        }
 
         if (soundCastleInstance) {
             castleSound.play()
@@ -551,6 +560,15 @@ export default function Board(props: { cleanArrows: () => void, sacrifice?: bool
 
         const formattedFrom = formatSquare(from)
         const formattedTo = formatSquare(to)
+
+        if (retryState.active) {
+            if (chess.get(from as Square)?.type === PAWN && [0, 7].includes(formattedTo.row)) {
+                setCoronation({ choosing: true, movement: [formattedFrom, formattedTo] })
+            } else {
+                submitRetryMove(from, to)
+            }
+            return
+        }
 
         if (chess.get(from as Square)?.type === PAWN && [0, 7].includes(formattedTo.row)) {
             setCoronation({ choosing: true, movement: [formattedFrom, formattedTo] })
@@ -709,7 +727,14 @@ export default function Board(props: { cleanArrows: () => void, sacrifice?: bool
                                 const highlightedSquare = adaptSquare(square)
                                 if (highlightedSquare.col === columnNumber && highlightedSquare.row === rowNumber) {
                                     highlighted = <div style={{ backgroundColor: highlightColor }} className="absolute z-[10] top-0 left-0 w-full h-full opacity-50" />
-                                    if (i === 1) highlightedIcon = highlightRating && i === 1 ? <RatingSVG className="absolute top-0 right-0 z-[80] pointer-events-none" style={{ transform: `translateX(${iconTranslateX}%) translateY(${iconTranslateY}%)` }} size={iconSize} rating={highlightRating} /> : ''
+                                    if (i === 1) highlightedIcon = highlightRating && i === 1 ? (
+                                        <RatingSVG
+                                            className="absolute top-0 right-0 z-[80] pointer-events-none badge-pop drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)] select-none"
+                                            style={{ transform: `translateX(${iconTranslateX}%) translateY(${iconTranslateY}%)` }}
+                                            size={iconSize}
+                                            rating={highlightRating}
+                                        />
+                                    ) : ''
                                 }
                             })
 
@@ -791,6 +816,12 @@ export default function Board(props: { cleanArrows: () => void, sacrifice?: bool
             }
             {
                 (() => {
+                    if (retryState.active && retryState.showSolution) {
+                        const move = previousBestMove || bestMove
+                        const adaptedMove = move?.map(square => adaptSquare(square))
+                        return adaptedMove ? <Arrow move={adaptedMove} squareSize={squareSize} class="fill-bestArrow stroke-bestArrow" white={white} /> : ''
+                    }
+
                     if (!showArrows) return
                     if ((highlightRating === 'book' && arrowAfterMove) || highlightRating === undefined) return
 
@@ -817,6 +848,13 @@ export default function Board(props: { cleanArrows: () => void, sacrifice?: bool
                         const from = deformatSquare(coronation.movement[0])
                         const to = deformatSquare(coronation.movement[1])
 
+                        if (retryState.active) {
+                            submitRetryMove(from, to, piece)
+                            setCoronation({ choosing: false, movement: [] })
+                            return
+                        }
+
+                        playPromoteSound()
                         analyzeMove(fen, { from, to, promotion: piece }, sacrifice ?? false, previousStaticEvals ?? [], false, bestMoveSan)
                         setCoronation({ choosing: false, movement: [] })
                     }

@@ -47,9 +47,14 @@ function isEndMiddlegame(position: position) {
     if (whitePieces <= 1 || blackPieces <= 1) return true
 }
 
+/**
+ * Calibrated CAPS2 Harmonic Power-Mean Blend (p = 0.25)
+ * Combines 50% power-mean (p = 0.25) and 50% arithmetic mean
+ * reflecting Chess.com's human accuracy distribution.
+ */
 export function avg(arr: number[]) {
     if (arr.length === 0) return 100
-    const p = 0.35
+    const p = 0.25
     const sumP = arr.reduce((acc, cur) => acc + Math.pow(Math.max(cur, 0.5), p), 0)
     const powerMeanVal = Math.pow(sumP / arr.length, 1 / p)
     const arithMeanVal = arr.reduce((acc, cur) => acc + cur, 0) / arr.length
@@ -145,65 +150,122 @@ export default function PlayersAccuracy(props: {
         setAccuracyPhases(accuraciesPhases)
     }, [moves, players])
 
-    return (
-        <div className="w-full px-4 py-2 flex flex-col gap-3 select-none">
-            {/* Header: Player Cards side-by-side */}
-            <div className="grid grid-cols-[80px_1fr_1fr] items-center gap-2">
-                <span className="text-xs font-bold text-neutral-400">Players</span>
+    // Calculate dual comparative split percentage for the comparative bar
+    const wVal = isNaN(accuracy.w) ? 50 : Math.max(1, accuracy.w)
+    const bVal = isNaN(accuracy.b) ? 50 : Math.max(1, accuracy.b)
+    const totalAcc = wVal + bVal
+    const whiteComparativeRatio = Math.round((wVal / totalAcc) * 100)
+    const blackComparativeRatio = 100 - whiteComparativeRatio
 
-                {/* White Player */}
-                <div className="flex flex-col items-center text-center gap-1.5 min-w-0">
-                    <span className="font-extrabold text-white text-sm truncate max-w-[120px]" title={players[0]?.name}>
-                        {players[0]?.name || 'White'}
-                    </span>
-                    <div className="relative w-14 h-14 overflow-hidden bg-[#dbd9d6] flex items-end justify-center shadow-md border-2 border-transparent">
-                        <Profile width={50} height={50} class="fill-white" />
+    return (
+        <div className="w-full bg-[#262421] border border-white/10 rounded-xl p-4 shadow-md flex flex-col gap-3.5 select-none">
+            {/* Header: Section Title */}
+            <div className="flex items-center justify-between">
+                <span className="text-xs font-black tracking-wider text-neutral-400 uppercase">
+                    CAPS2 Accuracy
+                </span>
+                <span className="text-[11px] text-neutral-400 font-semibold">
+                    Head-to-Head
+                </span>
+            </div>
+
+            {/* Players Comparison Grid */}
+            <div className="grid grid-cols-2 gap-4 items-center">
+                {/* White Player Card */}
+                <div className="flex items-center gap-3 bg-[#312e2b] rounded-xl p-2.5 border border-white/5 relative">
+                    <div className="relative w-12 h-12 rounded-full overflow-hidden bg-[#dbd9d6] flex items-end justify-center shadow-md border-2 border-white/20 flex-shrink-0">
+                        <Profile width={42} height={42} class="fill-white" />
                         {isWhiteWinner && (
-                            <span className="absolute -top-1 -right-1 bg-[#e6912c] text-white p-1 shadow-lg" title="Winner">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                            <span className="absolute -top-1 -right-1 bg-[#e6912c] text-white p-1 rounded-full shadow-lg" title="Winner">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/>
                                 </svg>
                             </span>
                         )}
                     </div>
+                    <div className="flex flex-col min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 rounded-full bg-white border border-black/20 flex-shrink-0" />
+                            <span className="font-extrabold text-white text-xs truncate" title={players[0]?.name}>
+                                {players[0]?.name || 'White'}
+                            </span>
+                        </div>
+                        {players[0]?.elo && (
+                            <span className="text-[10px] text-neutral-400 font-semibold pl-4">
+                                ({players[0].elo})
+                            </span>
+                        )}
+                        <span className="text-lg md:text-xl font-black text-white tabular-nums pl-4 leading-tight mt-0.5">
+                            {isNaN(accuracy.w) ? '—' : `${accuracy.w.toFixed(1)}%`}
+                        </span>
+                    </div>
                 </div>
 
-                {/* Black Player */}
-                <div className="flex flex-col items-center text-center gap-1.5 min-w-0">
-                    <span className="font-extrabold text-white text-sm truncate max-w-[120px]" title={players[1]?.name}>
-                        {players[1]?.name || 'Black'}
-                    </span>
-                    <div className="relative w-14 h-14 overflow-hidden bg-[#45423e] flex items-end justify-center shadow-md border-2 border-transparent">
-                        <Profile width={50} height={50} class="fill-[#211f1c]" />
+                {/* Black Player Card */}
+                <div className="flex items-center gap-3 bg-[#312e2b] rounded-xl p-2.5 border border-white/5 relative">
+                    <div className="relative w-12 h-12 rounded-full overflow-hidden bg-[#45423e] flex items-end justify-center shadow-md border-2 border-white/20 flex-shrink-0">
+                        <Profile width={42} height={42} class="fill-[#211f1c]" />
                         {isBlackWinner && (
-                            <span className="absolute -top-1 -right-1 bg-[#e6912c] text-white p-1 shadow-lg" title="Winner">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                            <span className="absolute -top-1 -right-1 bg-[#e6912c] text-white p-1 rounded-full shadow-lg" title="Winner">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/>
                                 </svg>
                             </span>
                         )}
+                    </div>
+                    <div className="flex flex-col min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 rounded-full bg-neutral-600 border border-white/30 flex-shrink-0" />
+                            <span className="font-extrabold text-white text-xs truncate" title={players[1]?.name}>
+                                {players[1]?.name || 'Black'}
+                            </span>
+                        </div>
+                        {players[1]?.elo && (
+                            <span className="text-[10px] text-neutral-400 font-semibold pl-4">
+                                ({players[1].elo})
+                            </span>
+                        )}
+                        <span className="text-lg md:text-xl font-black text-white tabular-nums pl-4 leading-tight mt-0.5">
+                            {isNaN(accuracy.b) ? '—' : `${accuracy.b.toFixed(1)}%`}
+                        </span>
                     </div>
                 </div>
             </div>
 
-            {/* Accuracy Row */}
-            <div className="grid grid-cols-[80px_1fr_1fr] items-center gap-2">
-                <span className="text-xs font-bold text-neutral-400">Accuracy</span>
-
-                {/* White Accuracy */}
-                <div className="flex justify-center">
-                    <div className="w-24 py-1.5 bg-[#262421] text-white border border-white/20 font-black text-base md:text-lg text-center shadow-md tabular-nums flex items-center justify-center gap-1.5">
-                        <span className="w-2.5 h-2.5 bg-white flex-shrink-0" />
-                        <span>{isNaN(accuracy.w) ? '—' : `${accuracy.w.toFixed(1)}%`}</span>
+            {/* Dual Horizontal Comparative Accuracy Bar */}
+            <div className="flex flex-col gap-1 pt-0.5">
+                <div className="w-full h-3.5 bg-[#1e1d1a] rounded-full overflow-hidden flex border border-white/10 shadow-inner relative">
+                    {/* White Fill */}
+                    <div
+                        style={{ width: `${whiteComparativeRatio}%` }}
+                        className="h-full bg-gradient-to-r from-[#f0f0f0] to-white transition-all duration-700 ease-out flex items-center justify-start pl-2"
+                    >
+                        {whiteComparativeRatio >= 20 && (
+                            <span className="text-[9px] font-black text-[#262421] tabular-nums leading-none">
+                                {whiteComparativeRatio}%
+                            </span>
+                        )}
                     </div>
+
+                    {/* Black Fill */}
+                    <div
+                        style={{ width: `${blackComparativeRatio}%` }}
+                        className="h-full bg-gradient-to-r from-[#3f3c37] to-[#262421] transition-all duration-700 ease-out flex items-center justify-end pr-2"
+                    >
+                        {blackComparativeRatio >= 20 && (
+                            <span className="text-[9px] font-black text-neutral-200 tabular-nums leading-none">
+                                {blackComparativeRatio}%
+                            </span>
+                        )}
+                    </div>
+
+                    {/* Center 50% Marker Notch */}
+                    <div className="absolute top-0 bottom-0 left-1/2 w-0.5 -ml-[1px] bg-neutral-500/40 pointer-events-none" />
                 </div>
 
-                {/* Black Accuracy */}
-                <div className="flex justify-center">
-                    <div className="w-24 py-1.5 bg-[#262421] text-white border border-white/20 font-black text-base md:text-lg text-center shadow-md tabular-nums flex items-center justify-center gap-1.5">
-                        <span className="w-2.5 h-2.5 bg-neutral-600 border border-white/20 flex-shrink-0" />
-                        <span>{isNaN(accuracy.b) ? '—' : `${accuracy.b.toFixed(1)}%`}</span>
-                    </div>
+                <div className="flex justify-between items-center text-[10px] text-neutral-400 font-semibold px-1">
+                    <span>{players[0]?.name || 'White'} ({accuracy.w ? `${accuracy.w.toFixed(0)}%` : '—'})</span>
+                    <span>{players[1]?.name || 'Black'} ({accuracy.b ? `${accuracy.b.toFixed(0)}%` : '—'})</span>
                 </div>
             </div>
         </div>
